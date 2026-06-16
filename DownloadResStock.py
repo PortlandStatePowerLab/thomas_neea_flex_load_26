@@ -14,7 +14,8 @@ path as this script.
 
 - Make necessary changes to the Analysis.py file as indicated in the tutorial documentation from Dana Paresa
 
-- This will save the files for each building in a folder called datasets in the same directory as this script.
+- This will save the files for each building in a folder called datasets one folder up from this script
+so that it does not save datasets in the github respository.
 '''
 
 import os
