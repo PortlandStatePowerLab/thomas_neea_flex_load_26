@@ -23,7 +23,11 @@ import ochre
 # USER SETTINGS
 #########################################
 
-filename = '180111_1_15_NR'
+#Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
+filename = 'All_630_1_45_1700_1_45_OS'
+
+#"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
+Input_folder = "HPWH All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -35,7 +39,7 @@ DEFAULT_WEATHER = ochre_dir / "defaults" / "Weather" / "USA_OR_Portland.Intl.AP.
 # Safe working folder (writable)
 script_dir = os.path.dirname(os.path.abspath(__file__))
 WORKING_DIR = os.path.dirname(script_dir)
-INPUT_DIR = os.path.join(WORKING_DIR, "Input Files", "bldg")
+INPUT_DIR = os.path.join(WORKING_DIR, Input_folder, "bldg")
 WEATHER_DIR = os.path.join(WORKING_DIR, "Weather")
 WEATHER_FILE = os.path.join(WEATHER_DIR, "USA_OR_Portland.Intl.AP.726980_TMY3.epw")
 XML_ADDRESS = "in.xml"
@@ -57,16 +61,23 @@ Tinit = 128
 count = 0
 
 # Schedule variant
-my_schedule = {
-    'M_LU_time': '05:30',
-    'M_LU_duration': 0.5,
-    'M_S_time': '06:00',
-    'M_S_duration': 4,
-    'E_ALU_time': '16:30',
-    'E_ALU_duration': 0.5,
-    'E_S_time': '17:00',
-    'E_S_duration': 3
+my_schedule1 = {
+    'M_LU_time': '06:30',
+    'M_LU_duration': 1,
+    'M_S_time': '07:30',
+    'M_S_duration': 4.5,
+    'E_ALU_time': '17:00',
+    'E_ALU_duration': 1,
+    'E_S_time': '18:00',
+    'E_S_duration': 4.5
 }
+
+#new schedule variant with 0.5 hour shift for M_S and E_S, reduce secondary peak
+my_schedule2 = my_schedule1.copy()
+my_schedule2['M_S_duration'] = my_schedule1['M_S_duration'] + 0.5
+my_schedule2['E_S_duration'] = my_schedule1['E_S_duration'] + 0.5
+
+my_schedule = [my_schedule1, my_schedule2]
 
 #########################################
 # TEMPERATURE CONVERSIONS F to C
@@ -299,8 +310,9 @@ if __name__ == "__main__":
     print(f"Found {len(homes)} homes")
 
     # Parallel simulations (threads are Windows-safe)
+    # my_schedule is crazy but I wanted to vary schedules within the for loop, so I summed the digits in the home name and mod by 2 to select one of two schedules
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(simulate_home, home, WEATHER_FILE, my_schedule) for home in homes]
+        futures = [executor.submit(simulate_home, home, WEATHER_FILE, my_schedule[sum(int(char) for char in home if char.isdigit()) % 2]) for home in homes]
         for f in concurrent.futures.as_completed(futures):
             try:
                 f.result()  # forces execution and raises exceptions if any

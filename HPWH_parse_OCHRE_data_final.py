@@ -29,18 +29,25 @@ def convert_custom_datetime(series):
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)  
 
-input_file_root = "180111_1_15_NR"
+input_file_root = "All_630_1_45_1700_1_45_OS"
 
-input_file_name1 = input_file_root + "_baseline.csv"
-input_file_name2 = input_file_root + "_controlled.csv"
-input_file_1  = os.path.join(project_dir, input_file_name1)
-input_file_2  = os.path.join(project_dir, input_file_name2)
+input_file_name1 = input_file_root + "_baseline"
+input_file_name2 = input_file_root + "_controlled"
+input_file_1  = os.path.join(project_dir, input_file_name1 +".csv")
+input_file_2  = os.path.join(project_dir, input_file_name2 +".csv")
 
-output_file_name1 = input_file_name1+"_ready_data.csv"
-output_file_name2 = input_file_name2+"_ready_data.csv" 
-folder_path = os.path.join(project_dir, "Ready_data")
-output_file_1 = os.path.join(project_dir, "Ready_data", output_file_name1)
-output_file_2 = os.path.join(project_dir, "Ready_data", output_file_name2)
+output_append_WHpower = "_WH_power"
+output_file_name1 = input_file_name1 + output_append_WHpower + ".csv"
+output_file_name2 = input_file_name2 + output_append_WHpower + ".csv"
+folder_path = os.path.join(project_dir, "Ready_data", input_file_root)
+output_file_1 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name1)
+output_file_2 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name2)
+
+output_append_totpower = "_total_power"
+output_file_name3 = input_file_name1 + output_append_totpower + ".csv"
+output_file_name4 = input_file_name2 + output_append_totpower + ".csv"
+output_file_3 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name3)
+output_file_4 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name4)
 
 
 ############################################################################
@@ -58,7 +65,7 @@ else:
 #                             Program Start                                #
 ############################################################################
 
-def process_data(input_file, output_file):
+def process_data(input_file, output_file, wanted_col):
     # read data 
     df = pd.read_csv(input_file)
 
@@ -79,17 +86,24 @@ def process_data(input_file, output_file):
     # Create column that contains hour and minute data
     df['hr_min'] = df['time'].dt.strftime('%H:%M')
 
-    # drop unwanted columns
-    df = df.drop(['Time', 'Total Electric Power (kW)', 'Total Electric Energy (kWh)', 'Water Heating COP (-)', 
-                'Water Heating Deadband Upper Limit (C)', 'Water Heating Deadband Lower Limit (C)', 'Water Heating Heat Pump COP (-)', 
-                'Hot Water Outlet Temperature (C)', 'Temperature - Indoor (C)', 'time'], axis=1)
+    cols = ['Time', 'Total Electric Power (kW)', 'Total Electric Energy (kWh)', 'Water Heating Electric Power (kW)', 
+    'Water Heating COP (-)', 'Water Heating Deadband Upper Limit (C)', 'Water Heating Deadband Lower Limit (C)', 'Water Heating Heat Pump COP (-)', 
+    'Hot Water Outlet Temperature (C)', 'Temperature - Indoor (C)', 'time']
 
+    #identify unwanted columns to drop
+    unwanted_cols = cols.copy()
+    unwanted_cols.remove(wanted_col)
+
+    # drop unwanted columns
+    df = df.drop(unwanted_cols, axis=1)
 
     # pivot the table
-    df_pivot = df.pivot_table(index = 'Home', columns = 'hr_min', values = 'Water Heating Electric Power (kW)')
+    df_pivot = df.pivot_table(index = 'Home', columns = 'hr_min', values = wanted_col)
 
     # write data to csv
     df_pivot.to_csv(output_file, index=True)
 
-process_data(input_file_1, output_file_1)
-process_data(input_file_2, output_file_2)
+process_data(input_file_1, output_file_1, 'Water Heating Electric Power (kW)')
+process_data(input_file_2, output_file_2, 'Water Heating Electric Power (kW)')
+process_data(input_file_1, output_file_3, 'Total Electric Power (kW)')
+process_data(input_file_2, output_file_4, 'Total Electric Power (kW)')

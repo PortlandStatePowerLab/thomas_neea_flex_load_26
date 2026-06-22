@@ -8,7 +8,7 @@ downloadTestSet.py takes a csv in the up06 folder (currently set to "Oregon80gal
 HPXML files for each building in the csv. It filters for Portland buildings only. 
 The downloaded files are saved in the "Input Files/bldg" folder, organized by building ID and upgrade level.
 
-Modified for 50gal by Thomas Metzler on 6/17/2026
+Modified by Thomas Metzler on 6/17/2026
 """
 
 
@@ -19,7 +19,11 @@ from ochre import Analysis
 import pandas as pd
 from ochre.utils import default_input_path
 
-input_file = "Oregon50gal.csv"
+
+# "HPWH_OR_50gal.csv","HPWH_OR_66gal.csv","HPWH_OR_80gal.csv","HPWH_OR_All.csv"
+input_file = "HPWH_OR_All.csv"
+#"HPWH 50 Input Files","HPWH 66 Input Files","HPWH 80 Input Files","HPWH All Input Files"
+Output_folder = "HPWH All Input Files"
 
 
 
@@ -52,7 +56,7 @@ def downloadTestSet():
     release = "resstock_tmy3_release_1"
     yr = "2022"
 
-    base_output = os.path.join(project_dir, "Input Files", "bldg")
+    base_output = os.path.join(project_dir, Output_folder, "bldg")
 
     print(f"[INFO] Base output directory: {base_output}")
 

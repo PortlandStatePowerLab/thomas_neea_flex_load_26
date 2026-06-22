@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Recreate Oregon50gal.csv, Oregon66gal.csv, and Oregon80gal.csv from
+Recreate HPWH_OR_50gal.csv, HPWH_OR_66gal.csv, HPWH_OR_80gal.csv, and HPWH_OR_All.csv from
 OR_upgrade06_metadata_and_annual_results.csv.
 
 Recovered filter logic:
@@ -9,9 +9,10 @@ Recovered filter logic:
   - in.city == "OR, Portland"
   - in.geometry_building_type_recs == "Single-Family Detached"
   - split by in.bedrooms:
-      1,2,3 -> Oregon50gal.csv
-      4     -> Oregon66gal.csv
-      5     -> Oregon80gal.csv
+      1,2,3 -> HPWH_OR_50gal.csv
+      4     -> HPWH_OR_66gal.csv
+      5     -> HPWH_OR_80gal.csv
+  - all three files combined (without bedroom filter) -> HPWH_OR_All.csv
   - Water heaters are sized by number of bedrooms, it is easier to filter by bedrooms than by actual size listed in the file
   - exclude three building IDs that were not present in the original saved files:
       247825, 475397, 264806, 424753
@@ -30,9 +31,10 @@ OUTPUT_DIR = Path(".")
 EXCLUDE_BLDG_IDS = {247825, 475397, 264806, 424753}
 
 EXPECTED_COUNTS = {
-    "Oregon50gal.csv": 434,
-    "Oregon66gal.csv": 145,
-    "Oregon80gal.csv": 39,
+    "HPWH_OR_50gal.csv": 434,
+    "HPWH_OR_66gal.csv": 145,
+    "HPWH_OR_80gal.csv": 39,
+    "HPWH_OR_All.csv": 618,
 }
 
 
@@ -65,9 +67,10 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
     )
 
     outputs = {
-        "Oregon50gal.csv": df[base_filter & df["in.bedrooms"].isin([1, 2, 3])],
-        "Oregon66gal.csv": df[base_filter & (df["in.bedrooms"] == 4)],
-        "Oregon80gal.csv": df[base_filter & (df["in.bedrooms"] == 5)],
+        "HPWH_OR_50gal.csv": df[base_filter & df["in.bedrooms"].isin([1, 2, 3])],
+        "HPWH_OR_66gal.csv": df[base_filter & (df["in.bedrooms"] == 4)],
+        "HPWH_OR_80gal.csv": df[base_filter & (df["in.bedrooms"] == 5)],
+        "HPWH_OR_All.csv": df[base_filter],
     }
 
     for filename, out_df in outputs.items():
