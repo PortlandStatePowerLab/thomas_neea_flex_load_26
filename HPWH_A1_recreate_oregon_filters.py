@@ -69,15 +69,7 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
     )
     
-    for row in df[base_filter_50]:
-        # Row elements will automatically group quoted items correctly.
-        # This removes commas from *inside* text values if they are breaking things
-        cleaned_row = [cell.replace(',', '') for cell in row]
-        df[base_filter_50].writerow(cleaned_row)
-    
     df[base_filter_50].to_csv (f'HPWH_OR_50gal.csv', index=False)
-
-    quit()
 
     base_filter_66 = (
         (df["upgrade"] == 9)

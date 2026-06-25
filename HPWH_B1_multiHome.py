@@ -49,9 +49,6 @@ WEATHER_FILE = os.path.join(WEATHER_DIR, "USA_OR_Portland.Intl.AP.726980_TMY3.ep
 XML_ADDRESS = "home.xml"
 CSV_ADDRESS = "in.schedules.csv"
 
-#2022 Outdated
-#XML_ADDRESS = "in.xml"
-#CSV_ADDRESS = "schedules.csv"
 
 # Simulation parameters
 Start = dt.datetime(2018, 1, 11, 0, 0)

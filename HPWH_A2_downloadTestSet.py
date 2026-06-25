@@ -109,7 +109,3 @@ if __name__ == "__main__":
     downloadTestSet(input_file_66, Output_folder_66)
     downloadTestSet(input_file_80, Output_folder_80)
     downloadTestSet(input_file_All, Output_folder_All)
-
-# Will get WARNING: Couldn't download ResStock files for bldg0547320-up09: ['in.xml', 'schedules.csv']
-# This is from the analysis.py file, it is outdated 
-# We do not need the in.xml or schedules.csv file, we need home.xml and in.schedules.csv. These get downloaded
