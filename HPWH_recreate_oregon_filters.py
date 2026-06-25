@@ -1,23 +1,23 @@
 # -*- coding: utf-8 -*-
 """
 Recreate HPWH_OR_50gal.csv, HPWH_OR_66gal.csv, HPWH_OR_80gal.csv, and HPWH_OR_All.csv from
-OR_upgrade06_metadata_and_annual_results.csv.
+OR_upgrade9.csv.
 
 Recovered filter logic:
-  - upgrade == 6
+  - upgrade == 9
   - in.state == "OR"
   - in.city == "OR, Portland"
   - in.geometry_building_type_recs == "Single-Family Detached"
-  - split by in.bedrooms:
-      1,2,3 -> HPWH_OR_50gal.csv
-      4     -> HPWH_OR_66gal.csv
-      5     -> HPWH_OR_80gal.csv
-  - all three files combined (without bedroom filter) -> HPWH_OR_All.csv
-  - Water heaters are sized by number of bedrooms, it is easier to filter by bedrooms than by actual size listed in the file
-  - exclude three building IDs that were not present in the original saved files:
-      247825, 475397, 264806, 424753
+  - split by upgrade.water_heater_efficiency:
+      Electric Heat Pump, 50 gal, 3.78 UEF     -> HPWH_OR_50gal.csv
+      Electric Heat Pump, 66 gal, 3.95 UEF     -> HPWH_OR_66gal.csv
+      Electric Heat Pump, 80 gal, 3.98 UEF     -> HPWH_OR_80gal.csv
+  - all three files combined                   -> HPWH_OR_All.csv
 
 This script preserves the original master-file row order and columns.
+
+50, 66, and 80 gal code does not work and I have no idea why!!!!
+
 
 Authors Jeff Dinsmore & Thomas Metzler 6/17/2026
 """
@@ -25,17 +25,18 @@ Authors Jeff Dinsmore & Thomas Metzler 6/17/2026
 from pathlib import Path
 import pandas as pd
 
-SOURCE_FILE = Path("OR_upgrade06_metadata_and_annual_results.csv")
+SOURCE_FILE = Path("OR_upgrade9.csv")
 OUTPUT_DIR = Path(".")
 
-EXCLUDE_BLDG_IDS = {247825, 475397, 264806, 424753}
+#EXCLUDE_BLDG_IDS = {11875, 234402, 433735}
+EXCLUDE_BLDG_IDS = {}
 
-EXPECTED_COUNTS = {
-    "HPWH_OR_50gal.csv": 434,
-    "HPWH_OR_66gal.csv": 145,
-    "HPWH_OR_80gal.csv": 39,
-    "HPWH_OR_All.csv": 618,
-}
+# EXPECTED_COUNTS = {
+#     "HPWH_OR_50gal.csv": 434,
+#     "HPWH_OR_66gal.csv": 145,
+#     "HPWH_OR_80gal.csv": 39,
+#     "HPWH_OR_All.csv": 618,
+# }
 
 
 def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DIR) -> None:
@@ -52,37 +53,61 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         "in.state",
         "in.city",
         "in.geometry_building_type_recs",
-        "in.bedrooms",
+        "upgrade.water_heater_efficiency",
+        "out.params.size_water_heater..gal"
     ]
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
-    base_filter = (
-        (df["upgrade"] == 6)
+    base_filter_50 = (
+        (df["upgrade"] == 9)
+        & (df["in.state"] == "OR")
+        & (df["in.city"] == "OR, Portland")
+        & (df["in.geometry_building_type_recs"] == "Single-Family Detached")
+        & (df["out.params.size_water_heater..gal"] == 50)
+        & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
+    )
+    
+    for row in df[base_filter_50]:
+        # Row elements will automatically group quoted items correctly.
+        # This removes commas from *inside* text values if they are breaking things
+        cleaned_row = [cell.replace(',', '') for cell in row]
+        df[base_filter_50].writerow(cleaned_row)
+    
+    df[base_filter_50].to_csv (f'HPWH_OR_50gal.csv', index=False)
+
+    quit()
+
+    base_filter_66 = (
+        (df["upgrade"] == 9)
+        & (df["in.state"] == "OR")
+        & (df["in.city"] == "OR, Portland")
+        & (df["in.geometry_building_type_recs"] == "Single-Family Detached")
+        & (df["out.params.size_water_heater..gal"] == 66)
+        & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
+    )
+    df[base_filter_66].to_csv (f'HPWH_OR_66gal.csv', index=False)
+
+
+    base_filter_80 = (
+        (df["upgrade"] == 9)
+        & (df["in.state"] == "OR")
+        & (df["in.city"] == "OR, Portland")
+        & (df["in.geometry_building_type_recs"] == "Single-Family Detached")
+        & (df["out.params.size_water_heater..gal"] == 80)
+        & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
+    )
+    df[base_filter_80].to_csv (f'HPWH_OR_80gal.csv', index=False)
+
+    base_filter_all = (
+        (df["upgrade"] == 9)
         & (df["in.state"] == "OR")
         & (df["in.city"] == "OR, Portland")
         & (df["in.geometry_building_type_recs"] == "Single-Family Detached")
         & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
     )
-
-    outputs = {
-        "HPWH_OR_50gal.csv": df[base_filter & df["in.bedrooms"].isin([1, 2, 3])],
-        "HPWH_OR_66gal.csv": df[base_filter & (df["in.bedrooms"] == 4)],
-        "HPWH_OR_80gal.csv": df[base_filter & (df["in.bedrooms"] == 5)],
-        "HPWH_OR_All.csv": df[base_filter],
-    }
-
-    for filename, out_df in outputs.items():
-        output_path = output_dir / filename
-        out_df.to_csv(output_path, index=False)
-
-        expected = EXPECTED_COUNTS[filename]
-        actual = len(out_df)
-        status = "OK" if actual == expected else "CHECK"
-        print(f"[{status}] {filename}: wrote {actual} rows to {output_path}")
-        if actual != expected:
-            print(f"       Expected {expected} rows")
+    df[base_filter_all].to_csv (f'HPWH_OR_All.csv', index=False)
 
 
 if __name__ == "__main__":

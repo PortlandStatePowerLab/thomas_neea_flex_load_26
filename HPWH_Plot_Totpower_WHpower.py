@@ -1,21 +1,23 @@
-import pandas as pd
-import csv
-import os
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-
+"""
 #Author: Thomas Metzler
 #6/22/2026
 
 #Creates plots for the average water heater and total household power consumption, comparing baseline and controlled
 #Works for HPWH 
+"""
+
+
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 
 #Copy path naming from HPWH_parse_OCHRE_data_final.py for consistency
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)  
 
-input_file_root = "All_630_1_45_1700_1_45_OS"
+input_file_root = "2025_All_630_1_45_1700_1_45_OS"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
@@ -97,6 +99,8 @@ def plot_data(baseline_file, controlled_file, title, photo_file, ax):
     ax.set_xlabel('Time')
     ax.set_ylabel('Power (kW)')
     ax.legend() # Displays labels properly
+    # ax.set_xlim(0, 24)
+    # ax.set_xticks([0,6,12,18,24])
 
     ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=6))  # Limit ticks
 

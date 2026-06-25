@@ -21,13 +21,20 @@ from ochre.utils import default_input_path
 
 
 # "HPWH_OR_50gal.csv","HPWH_OR_66gal.csv","HPWH_OR_80gal.csv","HPWH_OR_All.csv"
-input_file = "HPWH_OR_All.csv"
-#"HPWH 50 Input Files","HPWH 66 Input Files","HPWH 80 Input Files","HPWH All Input Files"
-Output_folder = "HPWH All Input Files"
+# "HPWH 50 Input Files","HPWH 66 Input Files","HPWH 80 Input Files","HPWH All Input Files"
+input_file_50 = "HPWH_OR_50gal.csv"
+Output_folder_50 = "HPWH 50 Input Files"
 
+input_file_66 = "HPWH_OR_66gal.csv"
+Output_folder_66 = "HPWH 66 Input Files"
 
+input_file_80 = "HPWH_OR_80gal.csv"
+Output_folder_80 = "HPWH 80 Input Files"
 
-def downloadTestSet():
+input_file_All = "HPWH_OR_All.csv"
+Output_folder_All = "HPWH All Input Files"
+
+def downloadTestSet(input_file, Output_folder):
 
     # -----------------------------
     # PATH SETUP (FIXED)
@@ -52,9 +59,9 @@ def downloadTestSet():
     # -----------------------------
     # CONSTANTS
     # -----------------------------
-    upgrade = 6
-    release = "resstock_tmy3_release_1"
-    yr = "2022"
+    upgrade = 9
+    release = "resstock_amy2018_release_1"
+    yr = "2025"
 
     base_output = os.path.join(project_dir, Output_folder, "bldg")
 
@@ -68,11 +75,14 @@ def downloadTestSet():
         building_id_str = f"bldg{int(bldg):07}"
         upgrade_str = f"up{upgrade:02}"
 
+
         outdir = os.path.join(base_output, f"{building_id_str}-{upgrade_str}")
 
         os.makedirs(outdir, exist_ok=True)
 
-        expected_file = os.path.join(outdir, "in.xml")
+        #in.xml for 2022
+        #expected_file = os.path.join(outdir, "in.xml")
+        expected_file = os.path.join(outdir, "home.xml")
 
         # skip if already exists
         if os.path.exists(expected_file):
@@ -95,4 +105,11 @@ def downloadTestSet():
 
 
 if __name__ == "__main__":
-    downloadTestSet()
+    downloadTestSet(input_file_50, Output_folder_50)
+    downloadTestSet(input_file_66, Output_folder_66)
+    downloadTestSet(input_file_80, Output_folder_80)
+    downloadTestSet(input_file_All, Output_folder_All)
+
+# Will get WARNING: Couldn't download ResStock files for bldg0547320-up09: ['in.xml', 'schedules.csv']
+# This is from the analysis.py file, it is outdated 
+# We do not need the in.xml or schedules.csv file, we need home.xml and in.schedules.csv. These get downloaded

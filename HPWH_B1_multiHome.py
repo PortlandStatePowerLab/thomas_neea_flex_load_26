@@ -24,7 +24,7 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'All_630_1_45_1700_1_45_OS'
+filename = '2025_All_630_1_45_1700_1_45_OS'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
 Input_folder = "HPWH All Input Files"
@@ -34,7 +34,11 @@ ochre_dir = Path(ochre.__file__).resolve().parent
 DEFAULT_INPUT = ochre_dir / "defaults" / "Input Files"
 print("OCHRE installed at:", ochre_dir)
 print(DEFAULT_INPUT)
+
 DEFAULT_WEATHER = ochre_dir / "defaults" / "Weather" / "USA_OR_Portland.Intl.AP.726980_TMY3.epw"
+#DEFAULT_WEATHER = ochre_dir / "defaults" / "Weather" / "G4100510_2018.csv" 
+# ^ Incorrect format for the weather file, it doesn't want csv
+# G4100510 is Multnomah county weather station, code will complain this is missing but it doesn't work otherwise
 
 # Safe working folder (writable)
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,8 +46,12 @@ WORKING_DIR = os.path.dirname(script_dir)
 INPUT_DIR = os.path.join(WORKING_DIR, Input_folder, "bldg")
 WEATHER_DIR = os.path.join(WORKING_DIR, "Weather")
 WEATHER_FILE = os.path.join(WEATHER_DIR, "USA_OR_Portland.Intl.AP.726980_TMY3.epw")
-XML_ADDRESS = "in.xml"
-CSV_ADDRESS = "schedules.csv"
+XML_ADDRESS = "home.xml"
+CSV_ADDRESS = "in.schedules.csv"
+
+#2022 Outdated
+#XML_ADDRESS = "in.xml"
+#CSV_ADDRESS = "schedules.csv"
 
 # Simulation parameters
 Start = dt.datetime(2018, 1, 11, 0, 0)
@@ -72,12 +80,20 @@ my_schedule1 = {
     'E_S_duration': 4.5
 }
 
-#new schedule variant with 0.5 hour shift for M_S and E_S, reduce secondary peak
+#new schedule variant with 0.25 hour shift for M_S and E_S, reduce secondary peak
 my_schedule2 = my_schedule1.copy()
-my_schedule2['M_S_duration'] = my_schedule1['M_S_duration'] + 0.5
-my_schedule2['E_S_duration'] = my_schedule1['E_S_duration'] + 0.5
+my_schedule2['M_S_duration'] = my_schedule1['M_S_duration'] + 0.25
+my_schedule2['E_S_duration'] = my_schedule1['E_S_duration'] + 0.25
 
-my_schedule = [my_schedule1, my_schedule2]
+my_schedule3 = my_schedule1.copy()
+my_schedule3['M_S_duration'] = my_schedule1['M_S_duration'] + 0.5
+my_schedule3['E_S_duration'] = my_schedule1['E_S_duration'] + 0.5
+
+my_schedule4 = my_schedule1.copy()
+my_schedule4['M_S_duration'] = my_schedule1['M_S_duration'] + 0.75
+my_schedule4['E_S_duration'] = my_schedule1['E_S_duration'] + 0.75
+
+my_schedule = [my_schedule1, my_schedule2, my_schedule3, my_schedule4]
 
 #########################################
 # TEMPERATURE CONVERSIONS F to C
@@ -186,6 +202,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
             },
         }
     }
+    # quit()
 
     # Baseline
     base_dwelling = Dwelling(name="HPWH Baseline", **dwelling_args_local)
@@ -246,6 +263,10 @@ def find_all_homes(base_dir):
                os.path.isfile(os.path.join(home_path, CSV_ADDRESS)):
                 homes.append(home_path)
     print(f"-++++++++++++ {homes}\n {base_dir}",)
+    # print(len(homes))
+    # x = list(set(homes))
+    # print(len(x))
+    # quit()
     return homes
 
 #########################################
@@ -311,8 +332,11 @@ if __name__ == "__main__":
 
     # Parallel simulations (threads are Windows-safe)
     # my_schedule is crazy but I wanted to vary schedules within the for loop, so I summed the digits in the home name and mod by 2 to select one of two schedules
+    # $ grep -rn "read_psm3(" .
+    # ./ochre/utils/schedule.py:186:        df, location = pvlib.iotools.read_psm3(weather_file, map_variables=True)
+    # Change to read_nsrdb_psm4 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(simulate_home, home, WEATHER_FILE, my_schedule[sum(int(char) for char in home if char.isdigit()) % 2]) for home in homes]
+        futures = [executor.submit(simulate_home, home, WEATHER_FILE, my_schedule[sum(int(char) for char in home if char.isdigit()) % 4]) for home in homes]
         for f in concurrent.futures.as_completed(futures):
             try:
                 f.result()  # forces execution and raises exceptions if any
