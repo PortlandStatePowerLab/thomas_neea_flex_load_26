@@ -10,6 +10,7 @@ Recovered filter logic:
   - in.geometry_building_type_recs == "Single-Family Detached"
   - in.water_heater_efficiency == "Electric Standard" OR "Electric Premium"
   - split by out.params.size_water_heater..gal:
+      30                            -> ERWH_OR_30gal.csv
       50                            -> ERWH_OR_50gal.csv
       66                            -> ERWH_OR_66gal.csv
       80                            -> ERWH_OR_80gal.csv
@@ -53,6 +54,19 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
+
+
+    base_filter_30 = (
+        (df["upgrade"] == 0)
+        & (df["in.state"] == "OR")
+        & (df["in.city"] == "OR, Portland")
+        & (df["in.geometry_building_type_recs"] == "Single-Family Detached")
+        & ((df["in.water_heater_efficiency"] == "Electric Standard") | (df["in.water_heater_efficiency"] == "Electric Premium"))
+        & (df["out.params.size_water_heater..gal"] == 30)
+        & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
+    )
+
+    df[base_filter_30].to_csv (f'ERWH_OR_30gal.csv', index=False)
 
     base_filter_50 = (
         (df["upgrade"] == 0)

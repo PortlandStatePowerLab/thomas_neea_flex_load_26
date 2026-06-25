@@ -22,6 +22,9 @@ from ochre.utils import default_input_path
 
 # "ERWH_OR_50gal.csv","ERWH_OR_66gal.csv","ERWH_OR_80gal.csv","ERWH_OR_All.csv"
 # "ERWH 50 Input Files","ERWH 66 Input Files","ERWH 80 Input Files","ERWH All Input Files"
+input_file_30 = "ERWH_OR_30gal.csv"
+Output_folder_30 = "ERWH 30 Input Files"
+
 input_file_50 = "ERWH_OR_50gal.csv"
 Output_folder_50 = "ERWH 50 Input Files"
 
@@ -59,7 +62,7 @@ def downloadTestSet(input_file, Output_folder):
     # -----------------------------
     # CONSTANTS
     # -----------------------------
-    upgrade = 9
+    upgrade = 0
     release = "resstock_amy2018_release_1"
     yr = "2025"
 
@@ -105,6 +108,7 @@ def downloadTestSet(input_file, Output_folder):
 
 
 if __name__ == "__main__":
+    downloadTestSet(input_file_30, Output_folder_30)
     downloadTestSet(input_file_50, Output_folder_50)
     downloadTestSet(input_file_66, Output_folder_66)
     downloadTestSet(input_file_80, Output_folder_80)
