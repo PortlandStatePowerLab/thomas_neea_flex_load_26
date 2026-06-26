@@ -29,7 +29,7 @@ def convert_custom_datetime(series):
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)  
 
-input_file_root = "2025_All_630_1_45_1700_1_45_OS"
+input_file_root = "ERWH_All_test"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
@@ -87,7 +87,7 @@ def process_data(input_file, output_file, wanted_col):
     df['hr_min'] = df['time'].dt.strftime('%H:%M')
 
     cols = ['Time', 'Total Electric Power (kW)', 'Total Electric Energy (kWh)', 'Water Heating Electric Power (kW)', 
-    'Water Heating COP (-)', 'Water Heating Deadband Upper Limit (C)', 'Water Heating Deadband Lower Limit (C)', 'Water Heating Heat Pump COP (-)', 
+    'Water Heating COP (-)', 'Water Heating Deadband Upper Limit (C)', 'Water Heating Deadband Lower Limit (C)', 
     'Hot Water Outlet Temperature (C)', 'Temperature - Indoor (C)', 'time']
 
     #identify unwanted columns to drop
