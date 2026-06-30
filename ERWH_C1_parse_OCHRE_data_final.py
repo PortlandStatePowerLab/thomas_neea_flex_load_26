@@ -29,7 +29,7 @@ def convert_custom_datetime(series):
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)  
 
-input_file_root = "ERWH_All_test"
+input_file_root = "ERWH_30_test"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"

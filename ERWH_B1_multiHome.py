@@ -24,10 +24,10 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'ERWH_All_test'
+filename = 'ERWH_30_test'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
-Input_folder = "ERWH All Input Files"
+Input_folder = "ERWH 30 Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -61,7 +61,7 @@ t_res = 15  # minutes
 # HPWH control parameters (°F)
 Tcontrol_SHEDF = 126
 Tcontrol_deadbandF = 10
-Tcontrol_LOADF = 130
+Tcontrol_LOADF = 135
 Tcontrol_LOADdeadbandF = 2
 TbaselineF = 130
 TdeadbandF = 7
@@ -194,11 +194,8 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "Equipment": {
             "Water Heating": {
                 "Initial Temperature (C)": TinitC, 
-                "hp_only_mode": True,
+                "hp_only_mode": False,
                 "Max Tank Temperature": 70,
-                "Upper Node": 3,
-                "Lower Node": 10,
-                "Upper Node Weight": 0.75,
             },
         }
     }

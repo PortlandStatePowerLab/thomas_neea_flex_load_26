@@ -108,8 +108,8 @@ def downloadTestSet(input_file, Output_folder):
 
 
 if __name__ == "__main__":
-    downloadTestSet(input_file_30, Output_folder_30)
-    downloadTestSet(input_file_50, Output_folder_50)
-    downloadTestSet(input_file_66, Output_folder_66)
-    downloadTestSet(input_file_80, Output_folder_80)
+    # downloadTestSet(input_file_30, Output_folder_30)
+    # downloadTestSet(input_file_50, Output_folder_50)
+    # downloadTestSet(input_file_66, Output_folder_66)
+    # downloadTestSet(input_file_80, Output_folder_80)
     downloadTestSet(input_file_All, Output_folder_All)

@@ -16,8 +16,6 @@ Recovered filter logic:
 
 This script preserves the original master-file row order and columns.
 
-50, 66, and 80 gal code does not work and I have no idea why!!!!
-
 
 Authors Jeff Dinsmore & Thomas Metzler 6/17/2026
 """
