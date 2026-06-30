@@ -43,11 +43,12 @@ def downloadTestSet(input_file, Output_folder):
     # PATH SETUP (FIXED)
     # -----------------------------
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_dir = os.path.dirname(script_dir)
+    FL_dir = os.path.dirname(script_dir)
+    working_dir = os.path.dirname(FL_dir)
 
     csvFilePath = os.path.join(
-        project_dir,
-        "Flex_Load",
+        working_dir,
+        "ERWH Filtered",
         input_file
     )
 
@@ -66,7 +67,7 @@ def downloadTestSet(input_file, Output_folder):
     release = "resstock_amy2018_release_1"
     yr = "2025"
 
-    base_output = os.path.join(project_dir, Output_folder, "bldg")
+    base_output = os.path.join(working_dir, Output_folder, "bldg")
 
     print(f"[INFO] Base output directory: {base_output}")
 
@@ -108,8 +109,8 @@ def downloadTestSet(input_file, Output_folder):
 
 
 if __name__ == "__main__":
-    # downloadTestSet(input_file_30, Output_folder_30)
-    # downloadTestSet(input_file_50, Output_folder_50)
-    # downloadTestSet(input_file_66, Output_folder_66)
-    # downloadTestSet(input_file_80, Output_folder_80)
+    downloadTestSet(input_file_30, Output_folder_30)
+    downloadTestSet(input_file_50, Output_folder_50)
+    downloadTestSet(input_file_66, Output_folder_66)
+    downloadTestSet(input_file_80, Output_folder_80)
     downloadTestSet(input_file_All, Output_folder_All)

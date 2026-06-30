@@ -25,9 +25,36 @@ Modified by Thomas Metzler for ERWH from HPWH 6/25/26
 
 from pathlib import Path
 import pandas as pd
+import os
 
-SOURCE_FILE = Path("OR_upgrade0.csv")
-OUTPUT_DIR = Path(".")
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+FL_dir = os.path.dirname(script_dir)
+working_dir = os.path.dirname(FL_dir)
+
+
+#-------------------------------------------------------
+#metadata file name
+input_file = "OR_upgrade0.csv"
+
+#filtered file save folder
+save_folder = "ERWH Filtered"
+#-------------------------------------------------------
+
+SOURCE_FILE = Path(
+        os.path.join(
+        working_dir,
+        "Metadata",
+        input_file
+    )
+)
+
+OUTPUT_DIR = Path(
+        os.path.join(
+        working_dir,
+        save_folder
+    )
+)
 
 #EXCLUDE_BLDG_IDS = {11875, 234402, 433735}
 EXCLUDE_BLDG_IDS = {}
@@ -66,7 +93,7 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
     )
 
-    df[base_filter_30].to_csv (f'ERWH_OR_30gal.csv', index=False)
+    df[base_filter_30].to_csv (output_dir / 'ERWH_OR_30gal.csv', index=False)
 
     base_filter_50 = (
         (df["upgrade"] == 0)
@@ -78,7 +105,7 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
     )
 
-    df[base_filter_50].to_csv (f'ERWH_OR_50gal.csv', index=False)
+    df[base_filter_50].to_csv (output_dir / 'ERWH_OR_50gal.csv', index=False)
 
     base_filter_66 = (
         (df["upgrade"] == 0)
@@ -89,7 +116,7 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         & (df["out.params.size_water_heater..gal"] == 66)
         & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
     )
-    df[base_filter_66].to_csv (f'ERWH_OR_66gal.csv', index=False)
+    df[base_filter_66].to_csv (output_dir / 'ERWH_OR_66gal.csv', index=False)
 
 
     base_filter_80 = (
@@ -101,7 +128,7 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         & (df["out.params.size_water_heater..gal"] == 80)
         & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
     )
-    df[base_filter_80].to_csv (f'ERWH_OR_80gal.csv', index=False)
+    df[base_filter_80].to_csv (output_dir / 'ERWH_OR_80gal.csv', index=False)
 
     base_filter_all = (
         (df["upgrade"] == 0)
@@ -111,7 +138,7 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         & ((df["in.water_heater_efficiency"] == "Electric Standard") | (df["in.water_heater_efficiency"] == "Electric Premium"))
         & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
     )
-    df[base_filter_all].to_csv (f'ERWH_OR_All.csv', index=False)
+    df[base_filter_all].to_csv (output_dir / 'ERWH_OR_All.csv', index=False)
 
 
 if __name__ == "__main__":
