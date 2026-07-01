@@ -20,9 +20,36 @@ Modified by Thomas Metzler for ERWH from HPWH 6/25/26
 
 from pathlib import Path
 import pandas as pd
+import os
 
-SOURCE_FILE = Path("OR_upgrade0.csv")
-OUTPUT_DIR = Path(".")
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+FL_dir = os.path.dirname(script_dir)
+working_dir = os.path.dirname(FL_dir)
+
+
+#-------------------------------------------------------
+#metadata file name
+input_file = "OR_upgrade0.csv"
+
+#filtered file save folder
+save_folder = "AC Filtered"
+#-------------------------------------------------------
+
+SOURCE_FILE = Path(
+        os.path.join(
+        working_dir,
+        "Metadata",
+        input_file
+    )
+)
+
+OUTPUT_DIR = Path(
+        os.path.join(
+        working_dir,
+        save_folder
+    )
+)
 
 #EXCLUDE_BLDG_IDS = {11875, 234402, 433735}
 EXCLUDE_BLDG_IDS = {}
@@ -55,11 +82,11 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         & (df["in.state"] == "OR")
         & (df["in.city"] == "OR, Portland")
         & (df["in.geometry_building_type_recs"] == "Single-Family Detached")
-        & ~(df["in.hvac_cooling_efficiency"] == "None")
+        & (df["in.hvac_cooling_efficiency"].notna())
         & (~df["bldg_id"].isin(EXCLUDE_BLDG_IDS))
     )
 
-    df[base_filter].to_csv (f'AC_OR.csv', index=False)
+    df[base_filter].to_csv (output_dir / 'AC_OR.csv', index=False)
 
 
 if __name__ == "__main__":

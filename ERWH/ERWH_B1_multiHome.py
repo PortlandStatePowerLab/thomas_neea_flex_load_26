@@ -42,7 +42,8 @@ DEFAULT_WEATHER = ochre_dir / "defaults" / "Weather" / "USA_OR_Portland.Intl.AP.
 
 # Safe working folder (writable)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-WORKING_DIR = os.path.dirname(script_dir)
+fl_dir = os.path.dirname(script_dir)
+WORKING_DIR = os.path.dirname(fl_dir)
 INPUT_DIR = os.path.join(WORKING_DIR, Input_folder, "bldg")
 WEATHER_DIR = os.path.join(WORKING_DIR, "Weather")
 WEATHER_FILE = os.path.join(WEATHER_DIR, "USA_OR_Portland.Intl.AP.726980_TMY3.epw")

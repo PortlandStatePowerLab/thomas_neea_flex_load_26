@@ -24,10 +24,10 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = '2025_All_630_1_45_1700_1_45_OS'
+filename = 'AC_Test'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
-Input_folder = "HPWH All Input Files"
+Input_folder = "AC Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -52,18 +52,18 @@ CSV_ADDRESS = "in.schedules.csv"
 
 
 # Simulation parameters
-Start = dt.datetime(2018, 1, 11, 0, 0)
+Start = dt.datetime(2018, 7, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
-# HPWH control parameters (°F)
-Tcontrol_SHEDF = 126
-Tcontrol_deadbandF = 10
-Tcontrol_LOADF = 130
+# HVAC control parameters (°F)
+Tcontrol_SHEDF = 76         
+Tcontrol_deadbandF = 2       
+Tcontrol_LOADF = 68          
 Tcontrol_LOADdeadbandF = 2
-TbaselineF = 130
-TdeadbandF = 7
-Tinit = 128
+TbaselineF = 72              
+TdeadbandF = 2
+Tinit = 72                   
 count = 0
 
 # Schedule variant
@@ -115,9 +115,9 @@ TinitC = f_to_c(Tinit)
 # HPWH CONTROL FUNCTION
 #########################################
 
-def determine_hpwh_control(sim_time, current_temp_c, sched_cfg, **kwargs):
+def determine_hvac_control(sim_time, current_temp_c, sched_cfg, **kwargs):
     ctrl_signal = {
-        'Water Heating': {
+        'HVAC Cooling': {
             'Setpoint': TbaselineC,
             'Deadband': TdeadbandC,
             'Load Fraction': 1,
@@ -138,12 +138,12 @@ def determine_hpwh_control(sim_time, current_temp_c, sched_cfg, **kwargs):
     }
 
     if ranges['M_LU'][0] <= sim_time < ranges['M_LU'][1] or ranges['E_ALU'][0] <= sim_time < ranges['E_ALU'][1]:
-        ctrl_signal['Water Heating'].update({
+        ctrl_signal['HVAC Cooling'].update({
             'Setpoint': Tcontrol_LOADC,
             'Deadband': Tcontrol_LOADdeadbandC
         })
     elif ranges['M_S'][0] <= sim_time < ranges['M_S'][1] or ranges['E_S'][0] <= sim_time < ranges['E_S'][1]:
-        ctrl_signal['Water Heating'].update({
+        ctrl_signal['HVAC Cooling'].update({
             'Setpoint': Tcontrol_SHEDC,
             'Deadband': Tcontrol_deadbandC
         })
@@ -188,33 +188,23 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
-        #"initialization_time": 1,
-        "Equipment": {
-            "Water Heating": {
-                "Initial Temperature (C)": TinitC, 
-                "hp_only_mode": True,
-                "Max Tank Temperature": 70,
-                "Upper Node": 3,
-                "Lower Node": 10,
-                "Upper Node Weight": 0.75,
-            },
-        }
     }
     # quit()
 
-    # Baseline
-    base_dwelling = Dwelling(name="HPWH Baseline", **dwelling_args_local)
+   # Baseline
+    base_dwelling = Dwelling(name="HVAC Baseline", **dwelling_args_local)
     for t_base in base_dwelling.sim_times:
-        base_ctrl = {"Water Heating": {"Setpoint": TbaselineC, "Deadband": TdeadbandC, "Load Fraction": 1}}
+        base_ctrl = {"HVAC Cooling": {"Setpoint": TbaselineC, "Deadband": TdeadbandC, "Load Fraction": 1}}
         base_dwelling.update(control_signal=base_ctrl)
     df_base, _, _ = base_dwelling.finalize()
 
     # Controlled
-    sim_dwelling = Dwelling(name="HPWH Controlled", **dwelling_args_local)
-    hpwh_unit = sim_dwelling.get_equipment_by_end_use('Water Heating')
+    sim_dwelling = Dwelling(name="HVAC Controlled", **dwelling_args_local)
+    hvac_unit = sim_dwelling.get_equipment_by_end_use('HVAC Cooling')
     for sim_time in sim_dwelling.sim_times:
-        current_setpt = hpwh_unit.schedule.loc[sim_time, 'Water Heating Setpoint (C)']
-        control_cmd = determine_hpwh_control(sim_time=sim_time, current_temp_c=current_setpt, sched_cfg=schedule_cfg)
+        # Fetch the baseline cooling schedule
+        current_setpt = hvac_unit.schedule.loc[sim_time, 'HVAC Cooling Setpoint (C)']
+        control_cmd = determine_hvac_control(sim_time=sim_time, current_temp_c=current_setpt, sched_cfg=schedule_cfg)
         sim_dwelling.update(control_signal=control_cmd)
     df_ctrl, _, _ = sim_dwelling.finalize()
 
@@ -223,16 +213,15 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     df_base = remove_first_day(df_base, Start)
     
 
-    CTRL_COLS = ["Time", "Total Electric Power (kW)",
-                 "Total Electric Energy (kWh)",
-                 "Water Heating Electric Power (kW)",
-                 "Water Heating COP (-)",
-                 "Water Heating Deadband Upper Limit (C)",
-                 "Water Heating Deadband Lower Limit (C)",
-                 "Water Heating Heat Pump COP (-)",
-                 "Water Heating Control Temperature (C)",
-                 "Hot Water Outlet Temperature (C)",
-                 "Temperature - Indoor (C)"]
+    CTRL_COLS = [
+        "Time", 
+        "Total Electric Power (kW)",
+        "Total Electric Energy (kWh)",
+        "HVAC Cooling Electric Power (kW)",
+        "HVAC Cooling COP (-)",
+        "Temperature - Indoor (C)",
+        "HVAC Heating Electric Power (kW)" 
+    ]
     BASE_COLS = CTRL_COLS
     
 
