@@ -1,23 +1,33 @@
+"""
+Author: Thomas Metzler
+6/28/2026
+
+Adjusts ERWH properties in the XML file that OCHRE will read.
+Updated to assign ERWH sizes based on a requested percentage distribution.
+"""
+
 import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import re
+import random  # Added for the distribution function
 
 # ---------------------------------------------------------
 # DIRECTORY SETUP
 # ---------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
-PARENT_DIR = SCRIPT_DIR.parent 
+FL_DIR = SCRIPT_DIR.parent 
+WORKING_DIR = FL_DIR.parent
 
-INPUT_DIR = PARENT_DIR / "ERWH All Input Files"
-OUTPUT_DIR = PARENT_DIR / "ERWH All AdjustedSize Input Files"
+INPUT_DIR = WORKING_DIR / "ERWH 66 Input Files"
+OUTPUT_DIR = WORKING_DIR / "ERWH DistribSize2 Input Files"
 
 # ---------------------------------------------------------
 # CONFIGURATIONS
 # ---------------------------------------------------------
 ERWH_SIZE_CONFIG = {
     "ERWH_size": {
-        # Current Volume : {"TankVolume": New Volume, "HeatingCapacity": New Capacity}
+        # Current Volume : {"TankVolume": New Volume, "HeatingCapacity": New Capacity (BTU/hr)}
         30.0: {"TankVolume": 50.0, "HeatingCapacity": 18767.0},
         50.0: {"TankVolume": 66.0, "HeatingCapacity": 18767.0},
         66.0: {"TankVolume": 80.0, "HeatingCapacity": 18767.0}
@@ -40,13 +50,20 @@ ERWH_CONVERSION_CONFIG = {
     }
 }
 
-
+#Adjust weights for each size to be randomly distributed
+ERWH_SIZE_DISTRIB_CONFIG = {
+    "ERWH_size_distrib": [
+        {"weight": 0.50, "TankVolume": 50.0, "HeatingCapacity": 18767.0},
+        {"weight": 0.20, "TankVolume": 66.0, "HeatingCapacity": 18767.0},
+        {"weight": 0.30, "TankVolume": 80.0, "HeatingCapacity": 18767.0}
+    ]
+}
 
 # ---------------------------------------------------------
 # MODIFIER FUNCTIONS
 # ---------------------------------------------------------
 def update_ERWH_size(root, config):
-    """Updates the size of existing ERWH systems."""
+    """Updates the size of existing ERWH systems based on original size."""
     ns_match = re.match(r'\{.*\}', root.tag)
     ns_bracket = ns_match.group(0) if ns_match else ''
 
@@ -81,6 +98,43 @@ def update_ERWH_size(root, config):
                         new_cap_elem.text = str(updates["HeatingCapacity"])
                         idx = list(elem).index(vol_elem)
                         elem.insert(idx + 1, new_cap_elem)
+
+def distribute_ERWH_size(root, config):
+    """Updates ERWH size based on a weighted random distribution."""
+    ns_match = re.match(r'\{.*\}', root.tag)
+    ns_bracket = ns_match.group(0) if ns_match else ''
+
+    dist_data = config["ERWH_size_distrib"]
+    # Extract the weights (0.2, 0.4, 0.4) to feed into the random choice
+    weights = [item["weight"] for item in dist_data]
+
+    for elem in root.iter():
+        if elem.tag.endswith('WaterHeatingSystem'):
+            vol_elem = None
+            cap_elem = None
+            
+            for child in elem:
+                if child.tag.endswith('TankVolume'):
+                    vol_elem = child
+                elif child.tag.endswith('HeatingCapacity'):
+                    cap_elem = child
+            
+            # As long as there is an existing water heater to update
+            if vol_elem is not None and vol_elem.text:
+                # Select a new configuration based on the defined weights
+                chosen_update = random.choices(dist_data, weights=weights, k=1)[0]
+                
+                # 1. Update Tank Volume
+                vol_elem.text = str(chosen_update["TankVolume"])
+                
+                # 2. Update Heating Capacity
+                if cap_elem is not None:
+                    cap_elem.text = str(chosen_update["HeatingCapacity"])
+                else:
+                    new_cap_elem = ET.Element(f'{ns_bracket}HeatingCapacity')
+                    new_cap_elem.text = str(chosen_update["HeatingCapacity"])
+                    idx = list(elem).index(vol_elem)
+                    elem.insert(idx + 1, new_cap_elem)
 
 def convert_HPWH_to_ERWH(root, config):
     """Converts a HPWH to an ERWH by swapping types, capacities, and schema tags."""
@@ -181,8 +235,9 @@ if __name__ == "__main__":
                 # TURN YOUR UPDATES ON OR OFF HERE
                 # ==========================================
                 
-                update_ERWH_size(root, ERWH_SIZE_CONFIG)
-                convert_HPWH_to_ERWH(root, ERWH_CONVERSION_CONFIG)
+                # update_ERWH_size(root, ERWH_SIZE_CONFIG)
+                # convert_HPWH_to_ERWH(root, ERWH_CONVERSION_CONFIG)
+                distribute_ERWH_size(root, ERWH_SIZE_DISTRIB_CONFIG)
                 
                 # ==========================================
                 

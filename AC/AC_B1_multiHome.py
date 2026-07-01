@@ -397,18 +397,5 @@ def aggregate_results(homes, work_dir):
 
 
 
-
-# CTRL_COLS = ["Time", "Total Electric Power (kW)",
-#              "Total Electric Energy (kWh)",
-#              "Water Heating Electric Power (kW)",
-#              "Water Heating COP (-)",
-#              "Water Heating Deadband Upper Limit (C)",
-#              "Water Heating Deadband Lower Limit (C)",
-#              "Water Heating Heat Pump COP (-)",
-#              "Water Heating Control Temperature (C)",
-#              "Hot Water Outlet Temperature (C)",
-#              "Temperature - Indoor (C)"]
-# BASE_COLS = CTRL_COLS
-
 aggregate_results(homes, WORKING_DIR)
 
