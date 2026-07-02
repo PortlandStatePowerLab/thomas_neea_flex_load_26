@@ -24,7 +24,7 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'AC_Test'
+filename = 'AC_Test_OFFSET_SCHEDULES'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
 Input_folder = "AC Input Files"
@@ -67,31 +67,76 @@ Tinit = 72
 count = 0
 
 # Schedule variant
+# my_schedule1 = {
+#     'M_LU_time': '06:30',
+#     'M_LU_duration': 0,
+#     'M_S_time': '07:30',
+#     'M_S_duration': 0,
+#     'E_ALU_time': '13:00',
+#     'E_ALU_duration': 1,
+#     'E_S_time': '14:00',
+#     'E_S_duration': 5
+# }
+
+# #new schedule variant with 0.25 hour shift for M_S and E_S, reduce secondary peak
+# my_schedule2 = my_schedule1.copy()
+# my_schedule2['M_S_duration'] = my_schedule1['M_S_duration'] + 0.25
+# my_schedule2['E_S_duration'] = my_schedule1['E_S_duration'] + 0.25
+
+# my_schedule3 = my_schedule1.copy()
+# my_schedule3['M_S_duration'] = my_schedule1['M_S_duration'] + 0.5
+# my_schedule3['E_S_duration'] = my_schedule1['E_S_duration'] + 0.5
+
+# my_schedule4 = my_schedule1.copy()
+# my_schedule4['M_S_duration'] = my_schedule1['M_S_duration'] + 0.75
+# my_schedule4['E_S_duration'] = my_schedule1['E_S_duration'] + 0.75
+
+# my_schedule = [my_schedule1, my_schedule2, my_schedule3, my_schedule4]
+
+
+# Schedule variant
 my_schedule1 = {
     'M_LU_time': '06:30',
-    'M_LU_duration': 1,
+    'M_LU_duration': 0,
     'M_S_time': '07:30',
-    'M_S_duration': 4.5,
-    'E_ALU_time': '17:00',
-    'E_ALU_duration': 1,
-    'E_S_time': '18:00',
-    'E_S_duration': 4.5
+    'M_S_duration': 0,
+    'E_ALU_time': '14:00',
+    'E_ALU_duration': 0.5,
+    'E_S_time': '14:30',
+    'E_S_duration': 6
 }
 
-#new schedule variant with 0.25 hour shift for M_S and E_S, reduce secondary peak
-my_schedule2 = my_schedule1.copy()
-my_schedule2['M_S_duration'] = my_schedule1['M_S_duration'] + 0.25
-my_schedule2['E_S_duration'] = my_schedule1['E_S_duration'] + 0.25
+def shift_time(time_str, minutes):
+    """Helper function to add minutes to an 'HH:MM' string."""
+    # Using 'dt' to match your 'import datetime as dt' alias perfectly
+    delta_t = dt.datetime.strptime(time_str, '%H:%M')
+    new_delta_t = delta_t + dt.timedelta(minutes=minutes)
+    return new_delta_t.strftime('%H:%M')
 
-my_schedule3 = my_schedule1.copy()
-my_schedule3['M_S_duration'] = my_schedule1['M_S_duration'] + 0.5
-my_schedule3['E_S_duration'] = my_schedule1['E_S_duration'] + 0.5
+# List to hold all generated schedules
+my_schedule = []
 
-my_schedule4 = my_schedule1.copy()
-my_schedule4['M_S_duration'] = my_schedule1['M_S_duration'] + 0.75
-my_schedule4['E_S_duration'] = my_schedule1['E_S_duration'] + 0.75
+# Generate 4 schedules with offsets of 0, 15, 30, and 45 minutes
+for i in range(4):
+    offset = i * 15  # Calculates offset: 0, 15, 30, 45
+    new_sched = my_schedule1.copy()
+    
+    for key, value in new_sched.items():
+        # Check if the key is a time variable
+        if key.endswith('_time'):
+            # Shift the start time
+            new_sched[key] = shift_time(value, offset)
+            
+        # Note: durations remain exactly the same across all schedules
+            
+    my_schedule.append(new_sched)
 
-my_schedule = [my_schedule1, my_schedule2, my_schedule3, my_schedule4]
+# Unpack for legacy references if needed elsewhere
+my_schedule1 = my_schedule[0]
+my_schedule2 = my_schedule[1]
+my_schedule3 = my_schedule[2]
+my_schedule4 = my_schedule[3]
+
 
 #########################################
 # TEMPERATURE CONVERSIONS F to C

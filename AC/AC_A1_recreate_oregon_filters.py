@@ -54,6 +54,10 @@ OUTPUT_DIR = Path(
 #EXCLUDE_BLDG_IDS = {11875, 234402, 433735}
 EXCLUDE_BLDG_IDS = {}
 
+print(SOURCE_FILE)
+print(OUTPUT_DIR)
+quit()
+
 
 def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DIR) -> None:
     if not source_file.exists():
