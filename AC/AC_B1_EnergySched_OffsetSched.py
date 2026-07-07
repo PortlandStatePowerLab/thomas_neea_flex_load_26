@@ -24,7 +24,7 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'AC_Test_OFFSET_SCHEDULES'
+filename = 'AC_Test_OFFSET_SCHEDULES_2hr'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
 Input_folder = "AC Input Files"
@@ -100,9 +100,9 @@ my_schedule1 = {
     'M_LU_duration': 0,
     'M_S_time': '07:30',
     'M_S_duration': 0,
-    'E_ALU_time': '14:00',
-    'E_ALU_duration': 0.5,
-    'E_S_time': '14:30',
+    'E_ALU_time': '13:00',
+    'E_ALU_duration': 1,
+    'E_S_time': '14:00',
     'E_S_duration': 6
 }
 
@@ -116,9 +116,12 @@ def shift_time(time_str, minutes):
 # List to hold all generated schedules
 my_schedule = []
 
-# Generate 4 schedules with offsets of 0, 15, 30, and 45 minutes
+#minutes you will offset schedules
+timestep = 30
+
+# Generate 4 schedules with offsets
 for i in range(4):
-    offset = i * 15  # Calculates offset: 0, 15, 30, 45
+    offset = i * timestep  # Calculates offset
     new_sched = my_schedule1.copy()
     
     for key, value in new_sched.items():
