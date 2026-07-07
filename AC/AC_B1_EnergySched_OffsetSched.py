@@ -24,7 +24,7 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'AC_Test_OFFSET_SCHEDULES_2hr'
+filename = 'AC_Test_OFFSET_SCHEDULES_4hr_8bin'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
 Input_folder = "AC Input Files"
@@ -103,7 +103,7 @@ my_schedule1 = {
     'E_ALU_time': '13:00',
     'E_ALU_duration': 1,
     'E_S_time': '14:00',
-    'E_S_duration': 6
+    'E_S_duration': 7
 }
 
 def shift_time(time_str, minutes):
@@ -119,8 +119,11 @@ my_schedule = []
 #minutes you will offset schedules
 timestep = 30
 
-# Generate 4 schedules with offsets
-for i in range(4):
+#number of bins
+bins = 8
+
+# Generate schedules with offsets
+for i in range(bins):
     offset = i * timestep  # Calculates offset
     new_sched = my_schedule1.copy()
     
@@ -134,12 +137,15 @@ for i in range(4):
             
     my_schedule.append(new_sched)
 
-# Unpack for legacy references if needed elsewhere
+
 my_schedule1 = my_schedule[0]
 my_schedule2 = my_schedule[1]
 my_schedule3 = my_schedule[2]
 my_schedule4 = my_schedule[3]
-
+my_schedule5 = my_schedule[4]
+my_schedule6 = my_schedule[5]
+my_schedule7 = my_schedule[6]
+my_schedule8 = my_schedule[7]
 
 #########################################
 # TEMPERATURE CONVERSIONS F to C
@@ -371,7 +377,7 @@ if __name__ == "__main__":
     # ./ochre/utils/schedule.py:186:        df, location = pvlib.iotools.read_psm3(weather_file, map_variables=True)
     # Change to read_nsrdb_psm4 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(simulate_home, home, WEATHER_FILE, my_schedule[sum(int(char) for char in home if char.isdigit()) % 4]) for home in homes]
+        futures = [executor.submit(simulate_home, home, WEATHER_FILE, my_schedule[sum(int(char) for char in home if char.isdigit()) % bins]) for home in homes]
         for f in concurrent.futures.as_completed(futures):
             try:
                 f.result()  # forces execution and raises exceptions if any
