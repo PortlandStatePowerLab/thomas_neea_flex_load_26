@@ -48,13 +48,13 @@ Install OCHRE:
 
 # If I want to work on this project, where should I start from?
 
-Clone the repository, download the ResStock metadata (OR_upgrade0.csv) to a folder named "Metadata" one directory above the flex load repository and weather file (USA_OR_Portland.Intl.AP.726980_TMY3) to a folder named "Weather" one directory above the flex load repository. All code is appliance specific, so enter the flex load folder for the appliance you wish to simulate. Run the code in order, editing input and output file names as necessary.  
+Clone the repository, download the ResStock metadata (OR_upgrade0.csv) to a folder named "Metadata" one directory above the flex load repository and weather file (USA_OR_Portland.Intl.AP.726980_TMY3) to a folder named "Weather" one directory above the flex load repository. All code is appliance specific, so enter the flex load folder for the appliance you wish to simulate. Run the codes in order, editing input and output file names as necessary.  
 (A: pre simulation)  
 A1 code will filter the metadata csv files to only the homes you need to run  
 A2 code will save XML input files and schedules that OCHRE will read  
 A3 code will adjust XML files if you need to change appliance properties  
 (B: simulation)  
-B1 code will simulate  
+B code will simulate, you only need to run one of these, the numbers are just to keep them in order 
 (C: post simulation)  
 C1 code will parse the raw data and reorganize it to home rows and time columns for a specific data series  
 C2 code will average the data for each time step and plot  
