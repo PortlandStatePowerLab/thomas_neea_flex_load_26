@@ -13,7 +13,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'AC_Test_Real_Time_VPP_Fleetstates'
+filename = 'AC_Test_LOADUP_VS_SHED_2'
 Input_folder = "AC Input Files"
 
 # Original OCHRE defaults folder
@@ -43,8 +43,9 @@ VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
 AVERAGE_SETPOINT_KW = 1.5     # Target average power PER HOME during VPP event
-AVERAGE_DEADBAND_KW = 0.05    # Tolerance PER HOME to prevent constant toggling
-ESTIMATED_AC_KW = 4.0         # Est. power change when 1 AC turns on/off
+AVERAGE_DEADBAND_KW = 0.1     # Tolerance PER HOME to prevent constant toggling
+ESTIMATED_LOAD_KW = 3.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
+ESTIMATED_SHED_KW = 0.5       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # HVAC control parameters (°F)
 Tcontrol_SHEDF = 76         
@@ -245,59 +246,70 @@ if __name__ == "__main__":
         is_vpp_active = VPP_START_TIME <= current_time_of_day < VPP_END_TIME
 
         if is_vpp_active:
-            # --- Active Load Shaping Dispatch Logic (Bidirectional) ---
+            # --- Active Load Shaping Dispatch Logic (Bidirectional & Asymmetrical) ---
             average_power_error = average_power_kw - AVERAGE_SETPOINT_KW
             
             if average_power_error > AVERAGE_DEADBAND_KW:
-                # OVER setpoint -> Need to drop load
+                # OVER setpoint -> Need to DROP load
                 total_kw_to_drop = average_power_error * num_homes
-                units_to_drop = int(total_kw_to_drop / ESTIMATED_AC_KW)
                 
-                # 1. Turn off active LOAD commands first
+                # 1. Turn off active LOAD commands first (High impact)
                 load_homes = [h for h in fleet_data if h["override"] == "LOAD"]
                 random.shuffle(load_homes)
-                dropped_from_load = min(units_to_drop, len(load_homes))
+                
+                units_to_drop_from_load = int(total_kw_to_drop / ESTIMATED_LOAD_KW)
+                dropped_from_load = min(units_to_drop_from_load, len(load_homes))
                 
                 for h in load_homes[:dropped_from_load]:
                     h["override"] = "NORMAL"
                     
-                units_to_drop -= dropped_from_load
+                # Subtract the power we just accounted for
+                total_kw_to_drop -= (dropped_from_load * ESTIMATED_LOAD_KW)
                 
-                # 2. If we still need to drop power, issue SHED commands
-                if units_to_drop > 0:
+                # 2. If we still need to drop power, issue SHED commands (Low impact)
+                if total_kw_to_drop > 0:
                     normal_homes = [h for h in fleet_data if h["override"] == "NORMAL"]
                     random.shuffle(normal_homes)
                     
-                    for h in normal_homes[:units_to_drop]:
+                    units_to_shed = int(total_kw_to_drop / ESTIMATED_SHED_KW)
+                    shed_applied = min(units_to_shed, len(normal_homes))
+                    
+                    for h in normal_homes[:shed_applied]:
                         h["override"] = "SHED"
                         
             elif average_power_error < -AVERAGE_DEADBAND_KW:
-                # UNDER setpoint -> Need to add load
+                # UNDER setpoint -> Need to ADD load
                 total_kw_to_add = abs(average_power_error) * num_homes
-                units_to_add = int(total_kw_to_add / ESTIMATED_AC_KW)
                 
-                # 1. Turn off active SHED commands first
+                # 1. Turn off active SHED commands first (Low impact)
                 shed_homes = [h for h in fleet_data if h["override"] == "SHED"]
                 random.shuffle(shed_homes)
-                restored_from_shed = min(units_to_add, len(shed_homes))
+                
+                units_to_restore_from_shed = int(total_kw_to_add / ESTIMATED_SHED_KW)
+                restored_from_shed = min(units_to_restore_from_shed, len(shed_homes))
                 
                 for h in shed_homes[:restored_from_shed]:
                     h["override"] = "NORMAL"
                     
-                units_to_add -= restored_from_shed
+                # Subtract the power we just accounted for
+                total_kw_to_add -= (restored_from_shed * ESTIMATED_SHED_KW)
                 
-                # 2. If we still need to add power, issue LOAD commands
-                if units_to_add > 0:
+                # 2. If we still need to add power, issue LOAD commands (High impact)
+                if total_kw_to_add > 0:
                     normal_homes = [h for h in fleet_data if h["override"] == "NORMAL"]
                     random.shuffle(normal_homes)
                     
-                    for h in normal_homes[:units_to_add]:
+                    units_to_load = int(total_kw_to_add / ESTIMATED_LOAD_KW)
+                    load_applied = min(units_to_load, len(normal_homes))
+                    
+                    for h in normal_homes[:load_applied]:
                         h["override"] = "LOAD"
         else:
             # --- VPP is OFF. Force all homes back to normal ---
             for h in fleet_data:
                 h["override"] = "NORMAL"
-        # --- Update All Homes for this Timestep ---
+
+        #Initialize 
         current_step_aggregate_power = 0.0
         
         for home_data in fleet_data:
