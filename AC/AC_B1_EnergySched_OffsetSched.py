@@ -166,7 +166,7 @@ TdeadbandC = f_to_c_DB(TdeadbandF)
 TinitC = f_to_c(Tinit)
 
 #########################################
-# HPWH CONTROL FUNCTION
+# AC CONTROL FUNCTION
 #########################################
 
 def determine_hvac_control(sim_time, current_temp_c, sched_cfg, **kwargs):
