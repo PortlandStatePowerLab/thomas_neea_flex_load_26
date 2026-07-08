@@ -13,7 +13,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'AC_Test_LOADUP_VS_SHED_2'
+filename = 'AC_Test_LOADUP_VS_SHED_3'
 Input_folder = "AC Input Files"
 
 # Original OCHRE defaults folder
@@ -45,7 +45,7 @@ VPP_END_TIME = dt.time(23, 0)
 AVERAGE_SETPOINT_KW = 1.5     # Target average power PER HOME during VPP event
 AVERAGE_DEADBAND_KW = 0.1     # Tolerance PER HOME to prevent constant toggling
 ESTIMATED_LOAD_KW = 3.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
-ESTIMATED_SHED_KW = 0.5       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
+ESTIMATED_SHED_KW = 1.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # HVAC control parameters (°F)
 Tcontrol_SHEDF = 76         
@@ -285,14 +285,14 @@ if __name__ == "__main__":
                 shed_homes = [h for h in fleet_data if h["override"] == "SHED"]
                 random.shuffle(shed_homes)
                 
-                units_to_restore_from_shed = int(total_kw_to_add / ESTIMATED_SHED_KW)
+                units_to_restore_from_shed = int(total_kw_to_add / ESTIMATED_LOAD_KW)
                 restored_from_shed = min(units_to_restore_from_shed, len(shed_homes))
                 
                 for h in shed_homes[:restored_from_shed]:
                     h["override"] = "NORMAL"
                     
                 # Subtract the power we just accounted for
-                total_kw_to_add -= (restored_from_shed * ESTIMATED_SHED_KW)
+                total_kw_to_add -= (restored_from_shed * ESTIMATED_LOAD_KW)
                 
                 # 2. If we still need to add power, issue LOAD commands (High impact)
                 if total_kw_to_add > 0:

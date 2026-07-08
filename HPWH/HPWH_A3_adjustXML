@@ -20,7 +20,7 @@ FL_DIR = SCRIPT_DIR.parent
 WORKING_DIR = FL_DIR.parent
 
 INPUT_DIR = WORKING_DIR / "HPWH All Input Files"
-OUTPUT_DIR = WORKING_DIR / "HPWH  Input Files"
+OUTPUT_DIR = WORKING_DIR / "HPWH SizeUpdate Input Files"
 
 # ---------------------------------------------------------
 # CONFIGURATIONS
@@ -76,17 +76,18 @@ def update_ERWH_size(root, config):
     ns_bracket = ns_match.group(0) if ns_match else ''
 
     for elem in root.iter():
-        if elem.tag.endswith('WaterHeatingSystem'):
+        if elem.tag.split('}')[-1] == 'WaterHeatingSystem':
             vol_elem = None
             cap_elem = None
             ef_elem = None
             
             for child in elem:
-                if child.tag.endswith('TankVolume'):
+                tag_name = child.tag.split('}')[-1]
+                if tag_name == 'TankVolume':
                     vol_elem = child
-                elif child.tag.endswith('HeatingCapacity'):
+                elif tag_name == 'HeatingCapacity':
                     cap_elem = child
-                elif child.tag.endswith('EnergyFactor'):
+                elif tag_name == 'UniformEnergyFactor':
                     ef_elem = child
             
             if vol_elem is not None and vol_elem.text:
@@ -95,8 +96,8 @@ def update_ERWH_size(root, config):
                 except ValueError:
                     continue
                 
-                if current_vol in config["ERWH_size"]:
-                    updates = config["ERWH_size"][current_vol]
+                if current_vol in config["HPWH_size"]:
+                    updates = config["HPWH_size"][current_vol]
                     
                     # 1. Update Tank Volume
                     vol_elem.text = str(updates["TankVolume"])
@@ -112,34 +113,35 @@ def update_ERWH_size(root, config):
 
                     # 3. Update Energy Factor
                     if ef_elem is not None:
-                        ef_elem.text = str(updates["EnergyFactor"])
+                        ef_elem.text = str(updates["UniformEnergyFactor"])
                     else:
-                        new_ef_elem = ET.Element(f'{ns_bracket}EnergyFactor')
-                        new_ef_elem.text = str(updates["EnergyFactor"])
+                        new_ef_elem = ET.Element(f'{ns_bracket}UniformEnergyFactor')
+                        new_ef_elem.text = str(updates["UniformEnergyFactor"])
                         idx = list(elem).index(vol_elem)
                         elem.insert(idx + 2, new_ef_elem)
 
-def distribute_ERWH_size(root, config):
-    """Updates ERWH size based on a weighted random distribution."""
+def distribute_HPWH_size(root, config):
+    """Updates HPWH size based on a weighted random distribution."""
     ns_match = re.match(r'\{.*\}', root.tag)
     ns_bracket = ns_match.group(0) if ns_match else ''
 
-    dist_data = config["ERWH_size_distrib"]
+    dist_data = config["HPWH_size_distrib"]
     # Extract the weights to feed into the random choice
     weights = [item["weight"] for item in dist_data]
 
     for elem in root.iter():
-        if elem.tag.endswith('WaterHeatingSystem'):
+        if elem.tag.split('}')[-1] == 'WaterHeatingSystem':
             vol_elem = None
             cap_elem = None
             ef_elem = None
             
             for child in elem:
-                if child.tag.endswith('TankVolume'):
+                tag_name = child.tag.split('}')[-1]
+                if tag_name == 'TankVolume':
                     vol_elem = child
-                elif child.tag.endswith('HeatingCapacity'):
+                elif tag_name == 'HeatingCapacity':
                     cap_elem = child
-                elif child.tag.endswith('EnergyFactor'):
+                elif tag_name == 'UniformEnergyFactor':
                     ef_elem = child
             
             # As long as there is an existing water heater to update
@@ -161,34 +163,45 @@ def distribute_ERWH_size(root, config):
                 
                 # 3. Update Energy Factor
                 if ef_elem is not None:
-                    ef_elem.text = str(chosen_update["EnergyFactor"])
+                    ef_elem.text = str(chosen_update["UniformEnergyFactor"])
                 else:
-                    new_ef_elem = ET.Element(f'{ns_bracket}EnergyFactor')
-                    new_ef_elem.text = str(chosen_update["EnergyFactor"])
+                    new_ef_elem = ET.Element(f'{ns_bracket}UniformEnergyFactor')
+                    new_ef_elem.text = str(chosen_update["UniformEnergyFactor"])
                     idx = list(elem).index(vol_elem)
                     elem.insert(idx + 2, new_ef_elem)
 
-def convert_HPWH_to_ERWH(root, config):
-    """Converts a HPWH to an ERWH by swapping types, capacities, and schema tags."""
+def convert_ERWH_to_HPWH(root, config):
+    """Converts a ERWH to an HPWH by swapping types, capacities, and schema tags."""
     ns_match = re.match(r'\{.*\}', root.tag)
     ns_bracket = ns_match.group(0) if ns_match else ''
     
-    conv_data = config["ERWH_Conversion"]
+    conv_data = config["HPWH_Conversion"]
 
     for elem in root.iter():
-        if elem.tag.endswith('WaterHeatingSystem'):
+        if elem.tag.split('}')[-1] == 'WaterHeatingSystem':
             type_elem = None
             cap_elem = None
             
-            # Locate identifying elements
+            # Locate identifying elements exactly using exact string matches
             for child in elem:
-                if child.tag.endswith('WaterHeaterType'):
+                tag_name = child.tag.split('}')[-1]
+                if tag_name == 'WaterHeaterType':
                     type_elem = child
-                elif child.tag.endswith('HeatingCapacity'):
+                elif tag_name == 'HeatingCapacity':
                     cap_elem = child
-            
-            # Check if it is actually a Heat Pump Water Heater
-            if type_elem is not None and type_elem.text == 'heat pump water heater':
+                elif tag_name == 'TankVolume':
+                    size_elem = child
+                elif tag_name == 'UniformEnergyFactor':
+                    uef_elem = child
+                elif tag_name == 'BackupHeatingCapacity':
+                    backheat_elem = child
+                elif tag_name == 'HPWHOperatingMode':
+                    op_elem = child
+                elif tag_name == 'UsageBin':
+                    usage_elem = child
+
+            # Check if it is actually a ER Water Heater
+            if type_elem is not None and type_elem.text == 'storage water heater':
                 
                 # 1. Change the water heater type
                 type_elem.text = conv_data["NewType"]
@@ -197,52 +210,69 @@ def convert_HPWH_to_ERWH(root, config):
                 if cap_elem is not None:
                     cap_elem.text = conv_data["HeatingCapacity"]
                 
-                # 3. Remove HPWH-specific elements
+                # 3. Remove ERWH-specific elements
                 to_remove = []
                 for child in elem:
-                    # If the child's tag ends with any of the blacklisted tags, mark it for removal
-                    if any(child.tag.endswith(tag) for tag in conv_data["ElementsToRemove"]):
+                    tag_name = child.tag.split('}')[-1]
+                    # Check exact match against our blacklist
+                    if tag_name in conv_data["ElementsToRemove"]:
                         to_remove.append(child)
                 
                 for child in to_remove:
                     elem.remove(child)
                 
-                # 4. Insert ERWH-specific elements (EnergyFactor, RecoveryEfficiency)
-                # We insert them directly after HeatingCapacity to keep the HPXML schema ordered properly
+                # 4. Insert HPWH-specific elements
                 if cap_elem is not None:
                     idx = list(elem).index(cap_elem)
                     
-                    ef_elem = ET.Element(f'{ns_bracket}EnergyFactor')
-                    ef_elem.text = conv_data["EnergyFactor"]
-                    elem.insert(idx + 1, ef_elem)
+                    uef_elem = ET.Element(f'{ns_bracket}UniformEnergyFactor')
+                    uef_elem.text = conv_data["UniformEnergyFactor"]
+                    elem.insert(idx + 1, uef_elem)
                     
-                    re_elem = ET.Element(f'{ns_bracket}RecoveryEfficiency')
-                    re_elem.text = conv_data["RecoveryEfficiency"]
-                    elem.insert(idx + 2, re_elem)
+                    size_elem = ET.Element(f'{ns_bracket}TankVolume')
+                    size_elem.text = conv_data["TankVolume"]
+                    elem.insert(idx + 2, size_elem)
 
+                    backheat_elem = ET.Element(f'{ns_bracket}BackupHeatingCapacity')
+                    backheat_elem.text = conv_data["BackupHeatingCapacity"]
+                    elem.insert(idx + 3, backheat_elem)
+
+                    op_elem = ET.Element(f'{ns_bracket}HPWHOperatingMode')
+                    op_elem.text = conv_data["HPWHOperatingMode"]
+                    elem.insert(idx + 4, op_elem)
+
+                    usage_elem = ET.Element(f'{ns_bracket}UsageBin')
+                    usage_elem.text = conv_data["UsageBin"]
+                    elem.insert(idx + 5, usage_elem)
+                    
 
 def convert_single_model(root, config):
-    """Converts all ERWH to a single model."""
+    """Converts all HPWH to a single model."""
     ns_match = re.match(r'\{.*\}', root.tag)
     ns_bracket = ns_match.group(0) if ns_match else ''
     
-    # FIX: Access the first item in the list
-    model_data = config["ERWH_model"][0]
+    # Access the first item in the list
+    model_data = config["HPWH_model"][0]
 
     for elem in root.iter():
-        if elem.tag.endswith('WaterHeatingSystem'):
+        if elem.tag.split('}')[-1] == 'WaterHeatingSystem':
             type_elem = None
             cap_elem = None
             ef_elem = None
+            vol_elem = None
+            backheat_elem = None
             
-            # Locate identifying elements
+            # Locate identifying elements using exact match
             for child in elem:
-                if child.tag.endswith('TankVolume'):
+                tag_name = child.tag.split('}')[-1]
+                if tag_name == 'TankVolume':
                     vol_elem = child
-                elif child.tag.endswith('HeatingCapacity'):
+                elif tag_name == 'HeatingCapacity':
                     cap_elem = child
-                elif child.tag.endswith('EnergyFactor'):
+                elif tag_name == 'UniformEnergyFactor':
                     ef_elem = child
+                elif tag_name == 'BackupHeatingCapacity':
+                    backheat_elem = child
             
             if vol_elem is not None and vol_elem.text:
                 try:
@@ -264,12 +294,21 @@ def convert_single_model(root, config):
 
                 # 3. Update Energy Factor
                 if ef_elem is not None:
-                    ef_elem.text = str(model_data["EnergyFactor"])
+                    ef_elem.text = str(model_data["UniformEnergyFactor"])
                 else:
-                    new_ef_elem = ET.Element(f'{ns_bracket}EnergyFactor')
-                    new_ef_elem.text = str(model_data["EnergyFactor"])
+                    new_ef_elem = ET.Element(f'{ns_bracket}UniformEnergyFactor')
+                    new_ef_elem.text = str(model_data["UniformEnergyFactor"])
                     idx = list(elem).index(vol_elem)
                     elem.insert(idx + 2, new_ef_elem)
+
+                # 4. Update Backup Heating
+                if backheat_elem is not None:
+                    backheat_elem.text = str(model_data["BackupHeatingCapacity"])
+                else:
+                    new_backheat_elem = ET.Element(f'{ns_bracket}BackupHeatingCapacity')
+                    new_backheat_elem.text = str(model_data["BackupHeatingCapacity"])
+                    idx = list(elem).index(vol_elem)
+                    elem.insert(idx + 3, new_backheat_elem)
 
 # ---------------------------------------------------------
 # DUPLICATION LOGIC
@@ -304,7 +343,6 @@ if __name__ == "__main__":
         output_path = Path(OUTPUT_DIR)
         
         for xml_file in output_path.rglob('*.xml'):
-            # print(f"Processing: {xml_file.name} in {xml_file.parent.name}")
             
             try:
                 # Dynamically register namespaces
@@ -318,10 +356,10 @@ if __name__ == "__main__":
                 # TURN YOUR UPDATES ON OR OFF HERE
                 # ==========================================
                 
-                # update_ERWH_size(root, ERWH_SIZE_CONFIG)
-                # convert_HPWH_to_ERWH(root, ERWH_CONVERSION_CONFIG)
-                # distribute_ERWH_size(root, ERWH_SIZE_DISTRIB_CONFIG)
-                convert_single_model(root, ERWH_MODEL_CONFIG)
+                update_ERWH_size(root, HPWH_SIZE_CONFIG)
+                # convert_ERWH_to_HPWH(root, HPWH_CONVERSION_CONFIG)
+                # distribute_HPWH_size(root, HPWH_SIZE_DISTRIB_CONFIG)
+                # convert_single_model(root, HPWH_MODEL_CONFIG)
                 
                 # ==========================================
                 
