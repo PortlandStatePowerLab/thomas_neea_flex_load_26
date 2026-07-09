@@ -39,19 +39,17 @@ ERWH_CONVERSION_CONFIG = {
     "ERWH_Conversion": {
         "NewType": "storage water heater",
         "NewFuelType": "electricity",
-        "DefaultTankVolume": "50.0", # Used if converting from Tankless
-        "HeatingCapacity": "18767.0",
-        "EnergyFactor": "0.92",
+        "TankVolume": "80.0",         # Controls the size for ALL water heaters
+        "HeatingCapacity": "18767.0", # Controls the capacity for ALL water heaters
+        "EnergyFactor": "0.93",
         "RecoveryEfficiency": "0.98",
-        # Tags that exist in other heaters but break the schema for standard ERWH
         "ElementsToRemove": [
             "BackupHeatingCapacity", 
             "UniformEnergyFactor", 
             "HPWHOperatingMode", 
             "UsageBin",
-            "EnergyFactor",       # Cleared to prevent duplicates if converting from Gas
-            "RecoveryEfficiency", # Cleared to prevent duplicates if converting from Gas
             "FirstHourRating"
+            # EnergyFactor and RecoveryEfficiency handled safely below
         ]
     }
 }
@@ -175,91 +173,111 @@ def distribute_ERWH_size(root, config):
                     elem.insert(idx + 2, new_ef_elem)
 
 def convert_to_ERWH(root, config):
-    """Converts a HPWH, Gas, or Tankless heater to an ERWH by swapping types, fuels, and capacities."""
+    """
+    Standardizes ALL water heaters in the XML to standard 
+    ERWHs using the parameters defined in the conversion config.
+    """
     ns_match = re.match(r'\{.*\}', root.tag)
     ns_bracket = ns_match.group(0) if ns_match else ''
     
     conv_data = config["ERWH_Conversion"]
 
     for elem in root.iter():
-        if elem.tag.endswith('WaterHeatingSystem'):
+        if elem.tag.split('}')[-1] == 'WaterHeatingSystem':
             type_elem = None
             fuel_elem = None
             cap_elem = None
             vol_elem = None
             
-            # Locate identifying elements
+            # Locate existing identifying elements
             for child in elem:
-                if child.tag.endswith('WaterHeaterType'):
+                tag_name = child.tag.split('}')[-1]
+                if tag_name == 'WaterHeaterType':
                     type_elem = child
-                elif child.tag.endswith('FuelType'):
+                elif tag_name == 'FuelType':
                     fuel_elem = child
-                elif child.tag.endswith('HeatingCapacity'):
+                elif tag_name == 'HeatingCapacity':
                     cap_elem = child
-                elif child.tag.endswith('TankVolume'):
+                elif tag_name == 'TankVolume':
                     vol_elem = child
             
-            # Identify if the system is HPWH, Tankless, or a non-electric Storage heater (like Gas)
-            is_hpwh = (type_elem is not None and type_elem.text == 'heat pump water heater')
-            is_tankless = (type_elem is not None and type_elem.text == 'tankless water heater')
-            is_gas_storage = (type_elem is not None and type_elem.text == 'storage water heater' and fuel_elem is not None and fuel_elem.text != 'electricity')
+            # 1. Force Water Heater Type
+            if type_elem is not None:
+                type_elem.text = conv_data["NewType"]
+            else:
+                type_elem = ET.Element(f'{ns_bracket}WaterHeaterType')
+                type_elem.text = conv_data["NewType"]
+                elem.insert(0, type_elem)
             
-            if is_hpwh or is_tankless or is_gas_storage:
-                
-                # 1. Change the water heater type
-                if type_elem is not None:
-                    type_elem.text = conv_data["NewType"]
-                
-                # 2. Update the Fuel Type to Electricity
-                if fuel_elem is not None:
-                    fuel_elem.text = conv_data["NewFuelType"]
-                else:
-                    new_fuel = ET.Element(f'{ns_bracket}FuelType')
-                    new_fuel.text = conv_data["NewFuelType"]
-                    # Insert safely at the top of the elements
-                    elem.insert(0, new_fuel)
+            # 2. Force Fuel Type to Electricity
+            if fuel_elem is not None:
+                fuel_elem.text = conv_data["NewFuelType"]
+            else:
+                new_fuel = ET.Element(f'{ns_bracket}FuelType')
+                new_fuel.text = conv_data["NewFuelType"]
+                # Insert right after WaterHeaterType
+                idx = list(elem).index(type_elem)
+                elem.insert(idx + 1, new_fuel)
 
-                # 3. Ensure Tank Volume exists
-                if vol_elem is None:
-                    vol_elem = ET.Element(f'{ns_bracket}TankVolume')
-                    vol_elem.text = conv_data["DefaultTankVolume"]
-                    # Insert before HeatingCapacity if possible
-                    if cap_elem is not None:
-                        idx = list(elem).index(cap_elem)
-                        elem.insert(idx, vol_elem)
-                    else:
-                        elem.append(vol_elem)
-                
-                # 4. Update the primary heating capacity
+            # 3. Force Tank Volume Override
+            if vol_elem is not None:
+                vol_elem.text = conv_data["TankVolume"]
+            else:
+                vol_elem = ET.Element(f'{ns_bracket}TankVolume')
+                vol_elem.text = conv_data["TankVolume"]
+                # Try to insert before heating capacity if it exists
                 if cap_elem is not None:
-                    cap_elem.text = conv_data["HeatingCapacity"]
+                    idx = list(elem).index(cap_elem)
+                    elem.insert(idx, vol_elem)
                 else:
-                    cap_elem = ET.Element(f'{ns_bracket}HeatingCapacity')
-                    cap_elem.text = conv_data["HeatingCapacity"]
-                    idx = list(elem).index(vol_elem)
-                    elem.insert(idx + 1, cap_elem)
-                
-                # 5. Remove incompatible HPWH, Gas, or Tankless specific elements
-                to_remove = []
-                for child in elem:
-                    # If the child's tag ends with any of the blacklisted tags, mark it for removal
-                    if any(child.tag.endswith(tag) for tag in conv_data["ElementsToRemove"]):
-                        to_remove.append(child)
-                
-                for child in to_remove:
-                    elem.remove(child)
-                
-                # 6. Insert ERWH-specific elements (EnergyFactor, RecoveryEfficiency)
-                # We place them after HeatingCapacity to keep the HPXML schema ordered properly
-                idx = list(elem).index(cap_elem)
-                
+                    elem.append(vol_elem)
+            
+            # 4. Force Heating Capacity Override
+            if cap_elem is not None:
+                cap_elem.text = conv_data["HeatingCapacity"]
+            else:
+                cap_elem = ET.Element(f'{ns_bracket}HeatingCapacity')
+                cap_elem.text = conv_data["HeatingCapacity"]
+                idx = list(elem).index(vol_elem)
+                elem.insert(idx + 1, cap_elem)
+            
+            # 5. Remove incompatible tags (from HPWH, Gas, or Tankless)
+            to_remove = []
+            for child in elem:
+                tag_name = child.tag.split('}')[-1]
+                if tag_name in conv_data["ElementsToRemove"]:
+                    to_remove.append(child)
+            
+            for child in to_remove:
+                elem.remove(child)
+            
+            # 6. Apply or Override ERWH-specific elements
+            ef_elem = None
+            re_elem = None
+            for child in elem:
+                tag_name = child.tag.split('}')[-1]
+                if tag_name == 'EnergyFactor':
+                    ef_elem = child
+                elif tag_name == 'RecoveryEfficiency':
+                    re_elem = child
+
+            idx = list(elem).index(cap_elem)
+            
+            if ef_elem is not None:
+                ef_elem.text = conv_data["EnergyFactor"]
+            else:
                 ef_elem = ET.Element(f'{ns_bracket}EnergyFactor')
                 ef_elem.text = conv_data["EnergyFactor"]
                 elem.insert(idx + 1, ef_elem)
-                
+            
+            if re_elem is not None:
+                re_elem.text = conv_data["RecoveryEfficiency"]
+            else:
                 re_elem = ET.Element(f'{ns_bracket}RecoveryEfficiency')
                 re_elem.text = conv_data["RecoveryEfficiency"]
-                elem.insert(idx + 2, re_elem)
+                # Insert immediately after EnergyFactor
+                idx_ef = list(elem).index(ef_elem)
+                elem.insert(idx_ef + 1, re_elem)
 
 
 def convert_single_model(root, config):
