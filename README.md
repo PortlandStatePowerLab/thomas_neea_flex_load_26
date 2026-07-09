@@ -54,7 +54,7 @@ A1 code will filter the metadata csv files to only the homes you need to run
 A2 code will save XML input files and schedules that OCHRE will read  
 A3 code will adjust XML files if you need to change appliance properties  
 (B: simulation)  
-B code will simulate, you only need to run one of these, the numbers are just to keep them in order 
+B code will simulate, you only need to run one of these, the numbers are just to keep them in order  
 (C: post simulation)  
 C1 code will parse the raw data and reorganize it to home rows and time columns for a specific data series  
 C2 code will average the data for each time step and plot  
