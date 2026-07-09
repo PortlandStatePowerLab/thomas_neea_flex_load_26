@@ -1,9 +1,9 @@
 """
 Author: Thomas Metzler
-6/28/2026
+Updated: 7/9/2026
 
 Adjusts HPWH properties in the XML file that OCHRE will read.
-Updated to assign ERWH sizes based on a requested percentage distribution.
+Updated to dynamically convert ERWH, Natural Gas, and Tankless units to HPWH.
 """
 
 import shutil
@@ -19,8 +19,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 FL_DIR = SCRIPT_DIR.parent 
 WORKING_DIR = FL_DIR.parent
 
-INPUT_DIR = WORKING_DIR / "HPWH All Input Files"
-OUTPUT_DIR = WORKING_DIR / "HPWH SizeUpdate Input Files"
+INPUT_DIR = WORKING_DIR / "All Portland Input Files"
+OUTPUT_DIR = WORKING_DIR / "HPWH All Portland Input Files"
 
 # ---------------------------------------------------------
 # CONFIGURATIONS
@@ -36,16 +36,19 @@ HPWH_SIZE_CONFIG = {
 
 HPWH_CONVERSION_CONFIG = {
     "HPWH_Conversion": {
+        "FuelType": "electricity",
         "NewType": "heat pump water heater",
         "TankVolume": "80.0",
         "HeatingCapacity": "7334.0",
         "UniformEnergyFactor": "3.98",
         "BackupHeatingCapacity": "15355.0",
         "HPWHOperatingMode": "hybrid/auto",
-        "UsageBin": "medium",
-        # Tags that exist in ERWH but break the schema for standard HPWH
+        "UsageBin": "medium", 
         "ElementsToRemove": [
-            "RecoveryEfficiency"
+            "RecoveryEfficiency",
+            "EnergyFactor",
+            "PerformanceAdjustment",
+            "extension"
         ]
     }
 }
@@ -170,8 +173,8 @@ def distribute_HPWH_size(root, config):
                     idx = list(elem).index(vol_elem)
                     elem.insert(idx + 2, new_ef_elem)
 
-def convert_ERWH_to_HPWH(root, config):
-    """Converts a ERWH to an HPWH by swapping types, capacities, and schema tags."""
+def convert_to_HPWH(root, config):
+    """Converts ERWH, Natural Gas, and Tankless heaters to an HPWH."""
     ns_match = re.match(r'\{.*\}', root.tag)
     ns_bracket = ns_match.group(0) if ns_match else ''
     
@@ -180,71 +183,68 @@ def convert_ERWH_to_HPWH(root, config):
     for elem in root.iter():
         if elem.tag.split('}')[-1] == 'WaterHeatingSystem':
             type_elem = None
-            cap_elem = None
+            fuel_elem = None
             
-            # Locate identifying elements exactly using exact string matches
+            # Locate base identifying elements
             for child in elem:
                 tag_name = child.tag.split('}')[-1]
                 if tag_name == 'WaterHeaterType':
                     type_elem = child
-                elif tag_name == 'HeatingCapacity':
-                    cap_elem = child
-                elif tag_name == 'TankVolume':
-                    size_elem = child
-                elif tag_name == 'UniformEnergyFactor':
-                    uef_elem = child
-                elif tag_name == 'BackupHeatingCapacity':
-                    backheat_elem = child
-                elif tag_name == 'HPWHOperatingMode':
-                    op_elem = child
-                elif tag_name == 'UsageBin':
-                    usage_elem = child
+                elif tag_name == 'FuelType':
+                    fuel_elem = child
 
-            # Check if it is actually a ER Water Heater
-            if type_elem is not None and type_elem.text == 'storage water heater':
+            # Check if it is a storage (ERWH/Gas) or instantaneous (Tankless) heater
+            if type_elem is not None and type_elem.text in ['storage water heater', 'instantaneous water heater']:
                 
-                # 1. Change the water heater type
+                # 1. Update Water Heater Type and Fuel Type
                 type_elem.text = conv_data["NewType"]
+                if fuel_elem is not None:
+                    fuel_elem.text = conv_data["FuelType"]
                 
-                # 2. Update the primary heating capacity
-                if cap_elem is not None:
-                    cap_elem.text = conv_data["HeatingCapacity"]
-                
-                # 3. Remove ERWH-specific elements
-                to_remove = []
-                for child in elem:
-                    tag_name = child.tag.split('}')[-1]
-                    # Check exact match against our blacklist
-                    if tag_name in conv_data["ElementsToRemove"]:
-                        to_remove.append(child)
-                
+                # 2. Remove conflicting elements
+                to_remove = [child for child in elem if child.tag.split('}')[-1] in conv_data["ElementsToRemove"]]
                 for child in to_remove:
                     elem.remove(child)
+                    
+                # 3. Add or update HPWH specific elements in correct schema order
+                # We anchor around FractionDHWLoadServed to maintain valid XML sequences
+                fraction_elem = next((c for c in elem if c.tag.split('}')[-1] == 'FractionDHWLoadServed'), None)
                 
-                # 4. Insert HPWH-specific elements
-                if cap_elem is not None:
-                    idx = list(elem).index(cap_elem)
-                    
-                    uef_elem = ET.Element(f'{ns_bracket}UniformEnergyFactor')
-                    uef_elem.text = conv_data["UniformEnergyFactor"]
-                    elem.insert(idx + 1, uef_elem)
-                    
-                    size_elem = ET.Element(f'{ns_bracket}TankVolume')
-                    size_elem.text = conv_data["TankVolume"]
-                    elem.insert(idx + 2, size_elem)
+                # Schema insertion order: (Tag Name, Value, Anchor Element, Insert After Anchor?)
+                updates = [
+                    ("TankVolume", conv_data["TankVolume"], fraction_elem, False), 
+                    ("HeatingCapacity", conv_data["HeatingCapacity"], fraction_elem, True), 
+                    ("BackupHeatingCapacity", conv_data["BackupHeatingCapacity"], fraction_elem, True),
+                    ("UniformEnergyFactor", conv_data["UniformEnergyFactor"], fraction_elem, True),
+                    ("HPWHOperatingMode", conv_data["HPWHOperatingMode"], fraction_elem, True),
+                    ("UsageBin", conv_data["UsageBin"], fraction_elem, True)
+                ]
 
-                    backheat_elem = ET.Element(f'{ns_bracket}BackupHeatingCapacity')
-                    backheat_elem.text = conv_data["BackupHeatingCapacity"]
-                    elem.insert(idx + 3, backheat_elem)
+                # Tracks our moving target for schema placement
+                current_anchor = fraction_elem
 
-                    op_elem = ET.Element(f'{ns_bracket}HPWHOperatingMode')
-                    op_elem.text = conv_data["HPWHOperatingMode"]
-                    elem.insert(idx + 4, op_elem)
-
-                    usage_elem = ET.Element(f'{ns_bracket}UsageBin')
-                    usage_elem.text = conv_data["UsageBin"]
-                    elem.insert(idx + 5, usage_elem)
+                for tag, value, anchor, insert_after in updates:
+                    existing = next((c for c in elem if c.tag.split('}')[-1] == tag), None)
                     
+                    # Update if it exists
+                    if existing is not None:
+                        existing.text = str(value)
+                        if insert_after:
+                            current_anchor = existing
+                    # Create and place if missing
+                    else:
+                        new_elem = ET.Element(f'{ns_bracket}{tag}')
+                        new_elem.text = str(value)
+                        
+                        if anchor is not None and current_anchor in list(elem):
+                            idx = list(elem).index(current_anchor if insert_after else anchor)
+                            insert_pos = idx + 1 if insert_after else idx
+                            elem.insert(insert_pos, new_elem)
+                            if insert_after:
+                                current_anchor = new_elem
+                        else:
+                            # Fallback if anchor is totally missing from file
+                            elem.append(new_elem)
 
 def convert_single_model(root, config):
     """Converts all HPWH to a single model."""
@@ -356,13 +356,17 @@ if __name__ == "__main__":
                 # TURN YOUR UPDATES ON OR OFF HERE
                 # ==========================================
                 
-                update_ERWH_size(root, HPWH_SIZE_CONFIG)
-                # convert_ERWH_to_HPWH(root, HPWH_CONVERSION_CONFIG)
+                # update_ERWH_size(root, HPWH_SIZE_CONFIG)
+                convert_to_HPWH(root, HPWH_CONVERSION_CONFIG)
                 # distribute_HPWH_size(root, HPWH_SIZE_DISTRIB_CONFIG)
                 # convert_single_model(root, HPWH_MODEL_CONFIG)
                 
                 # ==========================================
                 
+                # Apply pretty-print formatting to the tree
+                if hasattr(ET, 'indent'):
+                    ET.indent(tree, space="  ", level=0)
+
                 # Write changes back to the duplicated file
                 tree.write(xml_file, encoding='UTF-8', xml_declaration=True)
                 
