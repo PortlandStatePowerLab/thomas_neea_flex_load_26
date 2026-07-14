@@ -18,7 +18,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir) 
 working_dir = os.path.dirname(fl_dir)  
 
-input_file_root = "AC_Test_PID_1.0_0.8_1.0"
+input_file_root = "AC_Test_OFFSET_SCHEDULES_4hr_8bin_XMLEDIT"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
