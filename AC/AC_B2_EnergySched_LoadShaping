@@ -1,3 +1,9 @@
+"""
+Author: Thomas Metzler
+Created: 7/6/26
+Adjusts load up and shed commands to keep power consumption at a constant level.
+"""
+
 import os
 import shutil
 import datetime as dt
@@ -13,7 +19,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'AC_Test_LOADUP_VS_SHED_3'
+filename = 'AC_Test_PID_1.0_0.8_1.0'
 Input_folder = "AC Input Files"
 
 # Original OCHRE defaults folder
@@ -47,8 +53,14 @@ AVERAGE_DEADBAND_KW = 0.1     # Tolerance PER HOME to prevent constant toggling
 ESTIMATED_LOAD_KW = 3.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
 ESTIMATED_SHED_KW = 1.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
+# --- PID CONTROLLER GAINS ---
+# Tune these parameters to adjust responsiveness and damp oscillations
+KP = 1.0                      # Proportional gain
+KI = 0.8                      # Integral gain
+KD = 1.0                      # Derivative gain
+
 # HVAC control parameters (°F)
-Tcontrol_SHEDF = 76         
+Tcontrol_SHEDF = 76 
 Tcontrol_LOADF = 68          
 TbaselineF = 72              
 TdeadbandF = 2
@@ -91,6 +103,7 @@ def filter_schedules(home_path):
     return filtered_sched_file
 
 def find_all_homes(base_dir):
+    images = []
     homes = []
     for item in os.listdir(base_dir):
         home_path = os.path.join(base_dir, item)
@@ -238,6 +251,10 @@ if __name__ == "__main__":
 
     vpp_state_log = [] # Add this line to initialize the log
 
+    # PID State tracking variables
+    integral_error = 0.0
+    previous_error = 0.0
+
     print("Starting Co-Simulation Time Loop...")
     for sim_time in sim_times:
         current_time_of_day = sim_time.time()
@@ -247,11 +264,20 @@ if __name__ == "__main__":
 
         if is_vpp_active:
             # --- Active Load Shaping Dispatch Logic (Bidirectional & Asymmetrical) ---
-            average_power_error = average_power_kw - AVERAGE_SETPOINT_KW
+            # PID error calculation: Error = Setpoint - Actual
+            error = AVERAGE_SETPOINT_KW - average_power_kw
             
-            if average_power_error > AVERAGE_DEADBAND_KW:
+            # Discrete-time tracking transformations
+            integral_error += error
+            derivative_error = error - previous_error
+            previous_error = error
+            
+            # Compute PID output value
+            pid_output = (KP * error) + (KI * integral_error) + (KD * derivative_error)
+            
+            if pid_output < -AVERAGE_DEADBAND_KW:
                 # OVER setpoint -> Need to DROP load
-                total_kw_to_drop = average_power_error * num_homes
+                total_kw_to_drop = abs(pid_output) * num_homes
                 
                 # 1. Turn off active LOAD commands first (High impact)
                 load_homes = [h for h in fleet_data if h["override"] == "LOAD"]
@@ -277,9 +303,9 @@ if __name__ == "__main__":
                     for h in normal_homes[:shed_applied]:
                         h["override"] = "SHED"
                         
-            elif average_power_error < -AVERAGE_DEADBAND_KW:
+            elif pid_output > AVERAGE_DEADBAND_KW:
                 # UNDER setpoint -> Need to ADD load
-                total_kw_to_add = abs(average_power_error) * num_homes
+                total_kw_to_add = pid_output * num_homes
                 
                 # 1. Turn off active SHED commands first (Low impact)
                 shed_homes = [h for h in fleet_data if h["override"] == "SHED"]
@@ -308,6 +334,10 @@ if __name__ == "__main__":
             # --- VPP is OFF. Force all homes back to normal ---
             for h in fleet_data:
                 h["override"] = "NORMAL"
+            
+            # Reset PID memory tracking to prevent baseline distortion at next event start
+            integral_error = 0.0
+            previous_error = 0.0
 
         #Initialize 
         current_step_aggregate_power = 0.0
