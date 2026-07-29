@@ -19,7 +19,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_3'
+filename = 'Dryer_test_2'
 Input_folder = "Dryer All Portland Input Files"
 
 # Original OCHRE defaults folder
@@ -48,10 +48,10 @@ VPP_START_TIME = dt.time(12, 0)
 VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
-AVERAGE_SETPOINT_KW = 1.8     # Target average power PER HOME during VPP event
+AVERAGE_SETPOINT_KW = 2.0     # Target average power PER HOME during VPP event
 AVERAGE_DEADBAND_KW = 0.1     # Tolerance PER HOME to prevent constant toggling
-ESTIMATED_LOAD_KW = 0.001         # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
-ESTIMATED_SHED_KW = 0.1       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
+ESTIMATED_LOAD_KW = 0         # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
+ESTIMATED_SHED_KW = 1.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
