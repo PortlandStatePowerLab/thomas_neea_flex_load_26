@@ -6,7 +6,7 @@ Created on Wed Sep 24 14:46:47 2025
 @modified by: Jeff Dinsmore
 @modified date: 12/14/2025
 @modified by: Thomas Metzler
-@modified date: 6/17/2026
+@modified date: 7/28/2026
 """
 
 
@@ -30,16 +30,16 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)  
 working_dir = os.path.dirname(fl_dir)  
 
-input_file_root = "Heat_OriginalHP_Test"
+input_file_root = "Dryer_Test"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
 input_file_1  = os.path.join(working_dir, input_file_name1 +".csv")
 input_file_2  = os.path.join(working_dir, input_file_name2 +".csv")
 
-output_append_ACpower = "_Heating_power"
-output_file_name1 = input_file_name1 + output_append_ACpower + ".csv"
-output_file_name2 = input_file_name2 + output_append_ACpower + ".csv"
+output_append_dryerpower = "_dryer_power"
+output_file_name1 = input_file_name1 + output_append_dryerpower + ".csv"
+output_file_name2 = input_file_name2 + output_append_dryerpower + ".csv"
 folder_path = os.path.join(working_dir, "Ready_data", input_file_root)
 output_file_1 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name1)
 output_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name2)
@@ -90,10 +90,8 @@ def process_data(input_file, output_file, wanted_col):
     cols = ['Time',
         "Total Electric Power (kW)",
         "Total Electric Energy (kWh)",
-        "HVAC Heating Electric Power (kW)",
-        "HVAC Heating COP (-)",
-        "Temperature - Indoor (C)",
-        "HVAC Cooling Electric Power (kW)" ]
+        "Clothes Dryer Electric Power (kW)" 
+        ]
 
     #identify unwanted columns to drop
     unwanted_cols = cols.copy()
@@ -108,7 +106,7 @@ def process_data(input_file, output_file, wanted_col):
     # write data to csv
     df_pivot.to_csv(output_file, index=True)
 
-process_data(input_file_1, output_file_1, 'HVAC Heating Electric Power (kW)')
-process_data(input_file_2, output_file_2, 'HVAC Heating Electric Power (kW)')
+process_data(input_file_1, output_file_1, 'Clothes Dryer Electric Power (kW)')
+process_data(input_file_2, output_file_2, 'Clothes Dryer Electric Power (kW)')
 process_data(input_file_1, output_file_3, 'Total Electric Power (kW)')
 process_data(input_file_2, output_file_4, 'Total Electric Power (kW)')

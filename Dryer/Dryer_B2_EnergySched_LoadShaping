@@ -19,8 +19,8 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Heat_Test_PID_1.0_0.8_1.0'
-Input_folder = "HVAC All Portland Input Files"
+filename = 'Dryer_test_2'
+Input_folder = "Dryer All Portland Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -48,7 +48,7 @@ VPP_START_TIME = dt.time(12, 0)
 VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
-AVERAGE_SETPOINT_KW = 1.5     # Target average power PER HOME during VPP event
+AVERAGE_SETPOINT_KW = 2.2     # Target average power PER HOME during VPP event
 AVERAGE_DEADBAND_KW = 0.1     # Tolerance PER HOME to prevent constant toggling
 ESTIMATED_LOAD_KW = 3.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
 ESTIMATED_SHED_KW = 1.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
@@ -59,28 +59,28 @@ KP = 1.0                      # Proportional gain
 KI = 0.8                      # Integral gain
 KD = 1.0                      # Derivative gain
 
-# HVAC control parameters (°F)
-Tcontrol_SHEDF = 64 
-Tcontrol_LOADF = 72          
-TbaselineF = 68              
-TdeadbandF = 2
-Tinit = 68                   
+# # HVAC control parameters (°F)
+# Tcontrol_SHEDF = 64 
+# Tcontrol_LOADF = 72          
+# TbaselineF = 68              
+# TdeadbandF = 2
+# Tinit = 68                   
 count = 0
 
 #########################################
 # TEMPERATURE CONVERSIONS F to C
 #########################################
 
-def f_to_c(temp_f): 
-    return (temp_f - 32) * 5/9
+# def f_to_c(temp_f): 
+#     return (temp_f - 32) * 5/9
 
-def f_to_c_DB(temp_f):
-    return 5/9 * temp_f
+# def f_to_c_DB(temp_f):
+#     return 5/9 * temp_f
 
-Tcontrol_SHEDC = f_to_c(Tcontrol_SHEDF)
-Tcontrol_LOADC = f_to_c(Tcontrol_LOADF)
-TbaselineC = f_to_c(TbaselineF)
-TdeadbandC = f_to_c_DB(TdeadbandF)
+# Tcontrol_SHEDC = f_to_c(Tcontrol_SHEDF)
+# Tcontrol_LOADC = f_to_c(Tcontrol_LOADF)
+# TbaselineC = f_to_c(TbaselineF)
+# TdeadbandC = f_to_c_DB(TdeadbandF)
 
 #########################################
 # HELPER FUNCTIONS
@@ -126,8 +126,8 @@ def aggregate_results(homes, work_dir):
     all_ctrl, all_base = [], []
     for home in homes:
         results_dir = os.path.join(home, "Results")
-        ctrl_file = os.path.join(results_dir, "hpwh_controlled.csv")
-        base_file = os.path.join(results_dir, "hpwh_baseline.csv")
+        ctrl_file = os.path.join(results_dir, "dryer_controlled.csv")
+        base_file = os.path.join(results_dir, "dryer_baseline.csv")
         
         if os.path.exists(ctrl_file):
             df_ctrl = pd.read_csv(ctrl_file)
@@ -158,17 +158,15 @@ def determine_hvac_control(global_mode="NORMAL"):
     It purely reacts to the assigned global VPP mode.
     """
     ctrl_signal = {
-        'HVAC Heating': {
-            'Setpoint': TbaselineC,
-            'Deadband': TdeadbandC,
+        'Clothes Dryer': {
             'Load Fraction': 1,
         }
     }
 
     if global_mode == "SHED":
-        ctrl_signal['HVAC Heating'].update({'Setpoint': Tcontrol_SHEDC})
+        ctrl_signal['Clothes Dryer'].update({'Load Fraction': 0})
     elif global_mode == "LOAD":
-        ctrl_signal['HVAC Heating'].update({'Setpoint': Tcontrol_LOADC})
+        ctrl_signal['Clothes Dryer'].update({'Load Fraction': 1})
 
     return ctrl_signal
 
@@ -347,7 +345,7 @@ if __name__ == "__main__":
             sim_dw = home_data["sim"]
             
             # 1. Baseline Update
-            base_ctrl = {"HVAC Heating": {"Setpoint": TbaselineC, "Deadband": TdeadbandC, "Load Fraction": 1}}
+            base_ctrl = {"Clothes Dryer": {"Load Fraction": 1}}
             base_dw.update(control_signal=base_ctrl)
             
            # 2. Controlled Update (driven purely by the VPP state now)
@@ -392,8 +390,7 @@ if __name__ == "__main__":
     
     CTRL_COLS = [
         "Time", "Total Electric Power (kW)", "Total Electric Energy (kWh)",
-        "HVAC Heating Electric Power (kW)", "HVAC Heating COP (-)",
-        "Temperature - Indoor (C)", "HVAC Cooling Electric Power (kW)" 
+        "Clothes Dryer Electric Power (kW)"
     ]
     
     for home_data in fleet_data:
