@@ -4,11 +4,12 @@
 @Modified on 4/14/2026
 
 
-downloadTestSet.py takes a csv in the up06 folder (currently set to "Oregon80gal.csv") and downloads the corresponding
+downloadTestSet.py takes a csv in the up00folder (currently set to "AC_OR.csv") and downloads the corresponding
 HPXML files for each building in the csv. It filters for Portland buildings only. 
 The downloaded files are saved in the "Input Files/bldg" folder, organized by building ID and upgrade level.
 
 Modified by Thomas Metzler on 6/17/2026
+Modified for EV by Thomas Metzler on 7/29/2026
 """
 
 
@@ -22,11 +23,8 @@ from ochre.utils import default_input_path
 
 
 
-# "HPWH_OR_50gal.csv","HPWH_OR_66gal.csv","HPWH_OR_80gal.csv","HPWH_OR_All.csv"
-# "HPWH 50 Input Files","HPWH 66 Input Files","HPWH 80 Input Files","HPWH All Input Files"
-input_file_50 = "TX_Filtered.csv"
-Output_folder_50 = "TX Filtered"
-
+input_file = "EV_OR.csv"
+Output_folder = "EV Input Files"
 
 def downloadTestSet(input_file, Output_folder):
 
@@ -39,12 +37,13 @@ def downloadTestSet(input_file, Output_folder):
 
     csvFilePath = os.path.join(
         working_dir,
-        "TX Filtered",
+        "EV Filtered",
         input_file
     )
 
+
     print(f"[INFO] CSV Path: {csvFilePath}")
-    quit()
+
     # -----------------------------
     # LOAD CSV
     # -----------------------------
@@ -100,5 +99,4 @@ def downloadTestSet(input_file, Output_folder):
 
 
 if __name__ == "__main__":
-    downloadTestSet(input_file_50, Output_folder_50)
-
+    downloadTestSet(input_file, Output_folder)

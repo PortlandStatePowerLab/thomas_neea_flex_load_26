@@ -1,9 +1,9 @@
 """
 Author: Thomas Metzler
-Updated: 7/27/2026
+Updated: 7/29/2026
 
-Adjusts Dryer properties in the XML file that OCHRE will read.
-Updated to dynamically convert all systems to electric dryers
+Adjusts EV properties in the XML file that OCHRE will read.
+Updated to dynamically convert all systems to EV chargers
 and configure matching service feeders and branch circuits.
 """
 
