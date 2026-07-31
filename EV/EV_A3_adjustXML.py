@@ -3,6 +3,7 @@ Author: Thomas Metzler
 Adjusts EV properties in the XML file that OCHRE will read.
 Updated to dynamically convert all systems to EV chargers, assign 
 metadata-linked vehicles, and configure matching service feeders and branch circuits.
+Enforces strict HPXML XSD schema sequence for all inserted tags.
 """
 
 import shutil
@@ -154,32 +155,29 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
         print(f"[Warning] Bldg {bldg_id}: Neither <Systems> nor <BuildingDetails> found. Skipping.")
         return
 
-    # --- 3. Add or Update Electric Vehicle Charger ---
-    chargers = root.find(f'.//{ns}ElectricVehicleChargers')
-    charger_id = 'EVCharger1'
+    # --- 3. Create or Locate Elements Independently ---
+    vehicles_node = root.find(f'.//{ns}Vehicles')
+    if vehicles_node is None:
+        vehicles_node = ET.Element(f'{ns}Vehicles')
+    else:
+        for child in list(vehicles_node):
+            vehicles_node.remove(child)
 
-    if chargers is None:
-        chargers = ET.SubElement(parent_node, f'{ns}ElectricVehicleChargers')
-    
-    # Clear existing chargers to ensure correct tier
-    for child in list(chargers):
-        chargers.remove(child)
-            
-    charger_elem = ET.SubElement(chargers, f'{ns}ElectricVehicleCharger')
+    chargers_node = root.find(f'.//{ns}ElectricVehicleChargers')
+    charger_id = 'EVCharger1'
+    if chargers_node is None:
+        chargers_node = ET.Element(f'{ns}ElectricVehicleChargers')
+    else:
+        for child in list(chargers_node):
+            chargers_node.remove(child)
+
+    # --- 4. Build Charger Properties ---
+    charger_elem = ET.SubElement(chargers_node, f'{ns}ElectricVehicleCharger')
     ET.SubElement(charger_elem, f'{ns}SystemIdentifier', id=charger_id)
     ET.SubElement(charger_elem, f'{ns}ChargingLevel').text = charger_level
     ET.SubElement(charger_elem, f'{ns}ChargingPower').text = charger_config["ChargingPower"]
 
-    # --- 4. Add or Update Vehicle ---
-    vehicles_node = root.find(f'.//{ns}Vehicles')
-    
-    if vehicles_node is None:
-        vehicles_node = ET.SubElement(parent_node, f'{ns}Vehicles')
-        
-    # Clear existing vehicles
-    for child in list(vehicles_node):
-        vehicles_node.remove(child)
-            
+    # --- 5. Build Vehicle Properties ---
     veh_elem = ET.SubElement(vehicles_node, f'{ns}Vehicle')
     ET.SubElement(veh_elem, f'{ns}SystemIdentifier', id='Vehicle1')
     
@@ -217,35 +215,52 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     ET.SubElement(fec, f'{ns}Units').text = 'kWh/mile'
     ET.SubElement(fec, f'{ns}Value').text = veh_specs["FuelEconomy"]
 
-    # --- 5. Service Feeder & Branch Circuit ---
-    all_feeders = root.findall(f'.//{ns}ServiceFeeder')
-    max_f_num = max([int(re.search(r'\d+', f.find(f'{ns}SystemIdentifier').get('id', '0')).group()) for f in all_feeders if f.find(f'{ns}SystemIdentifier') is not None] + [0])
-    
-    feeder_exists = any(f.find(f'{ns}AttachedToComponent') is not None and f.find(f'{ns}AttachedToComponent').get('idref') == charger_id for f in all_feeders)
-    
+    # --- 6. Enforce Schema Insertion Order ---
+    # Detach them from parent_node if they are currently attached
+    if vehicles_node in list(parent_node):
+        parent_node.remove(vehicles_node)
+    if chargers_node in list(parent_node):
+        parent_node.remove(chargers_node)
+        
+    # HPXML mandates: Vehicles -> ElectricVehicleChargers -> Generators
+    generators_node = parent_node.find(f'{ns}Generators')
+    if generators_node is not None:
+        insert_idx = list(parent_node).index(generators_node)
+    else:
+        insert_idx = len(parent_node)
+
+    # Insert backwards at the identical index so Vehicles remains before Chargers
+    parent_node.insert(insert_idx, chargers_node)
+    parent_node.insert(insert_idx, vehicles_node)
+
+    # --- 7. Service Feeder & Branch Circuit ---
     circuit_parent = root.find(f'.//{ns}ElectricalLoadCenter')
     
-    if not feeder_exists and circuit_parent is not None:
-        new_feeder = ET.SubElement(circuit_parent, f'{ns}ServiceFeeder')
-        ET.SubElement(new_feeder, f'{ns}SystemIdentifier', id=f'ServiceFeeder{max_f_num + 1}')
-        ET.SubElement(new_feeder, f'{ns}LoadType').text = 'electric vehicle charging'
-        ET.SubElement(new_feeder, f'{ns}PowerRating').text = charger_config["ChargingPower"]
-        ET.SubElement(new_feeder, f'{ns}IsNewLoad').text = "false"
-        ET.SubElement(new_feeder, f'{ns}AttachedToComponent', idref=charger_id)
+    if circuit_parent is not None:
+        all_circuits = root.findall(f'.//{ns}BranchCircuit')
+        max_c_num = max([int(re.search(r'\d+', c.find(f'{ns}SystemIdentifier').get('id', '0')).group()) for c in all_circuits if c.find(f'{ns}SystemIdentifier') is not None] + [0])
+        circuit_exists = any(c.find(f'{ns}AttachedToComponent') is not None and c.find(f'{ns}AttachedToComponent').get('idref') == charger_id for c in all_circuits)
+        
+        # Insert Branch Circuit first to respect schema load center sequence
+        if not circuit_exists:
+            new_circuit = ET.SubElement(circuit_parent, f'{ns}BranchCircuit')
+            ET.SubElement(new_circuit, f'{ns}SystemIdentifier', id=f'BranchCircuit{max_c_num + 1}')
+            ET.SubElement(new_circuit, f'{ns}Voltage').text = charger_config["Voltage"]
+            ET.SubElement(new_circuit, f'{ns}MaximumCurrentRating').text = charger_config["MaxCurrentRating"]
+            ET.SubElement(new_circuit, f'{ns}OccupiedSpaces').text = charger_config["OccupiedSpaces"]
+            ET.SubElement(new_circuit, f'{ns}AttachedToComponent', idref=charger_id)
 
-    all_circuits = root.findall(f'.//{ns}BranchCircuit')
-    max_c_num = max([int(re.search(r'\d+', c.find(f'{ns}SystemIdentifier').get('id', '0')).group()) for c in all_circuits if c.find(f'{ns}SystemIdentifier') is not None] + [0])
-    
-    circuit_exists = any(c.find(f'{ns}AttachedToComponent') is not None and c.find(f'{ns}AttachedToComponent').get('idref') == charger_id for c in all_circuits)
-    
-    if not circuit_exists and circuit_parent is not None:
-        new_circuit = ET.SubElement(circuit_parent, f'{ns}BranchCircuit')
-        ET.SubElement(new_circuit, f'{ns}SystemIdentifier', id=f'BranchCircuit{max_c_num + 1}')
-        ET.SubElement(new_circuit, f'{ns}Voltage').text = charger_config["Voltage"]
-        ET.SubElement(new_circuit, f'{ns}MaximumCurrentRating').text = charger_config["MaxCurrentRating"]
-        ET.SubElement(new_circuit, f'{ns}OccupiedSpaces').text = charger_config["OccupiedSpaces"]
-        ET.SubElement(new_circuit, f'{ns}AttachedToComponent', idref=charger_id)
-
+        all_feeders = root.findall(f'.//{ns}ServiceFeeder')
+        max_f_num = max([int(re.search(r'\d+', f.find(f'{ns}SystemIdentifier').get('id', '0')).group()) for f in all_feeders if f.find(f'{ns}SystemIdentifier') is not None] + [0])
+        feeder_exists = any(f.find(f'{ns}AttachedToComponent') is not None and f.find(f'{ns}AttachedToComponent').get('idref') == charger_id for f in all_feeders)
+        
+        if not feeder_exists:
+            new_feeder = ET.SubElement(circuit_parent, f'{ns}ServiceFeeder')
+            ET.SubElement(new_feeder, f'{ns}SystemIdentifier', id=f'ServiceFeeder{max_f_num + 1}')
+            ET.SubElement(new_feeder, f'{ns}LoadType').text = 'electric vehicle charging'
+            ET.SubElement(new_feeder, f'{ns}PowerRating').text = charger_config["ChargingPower"]
+            ET.SubElement(new_feeder, f'{ns}IsNewLoad').text = "false"
+            ET.SubElement(new_feeder, f'{ns}AttachedToComponent', idref=charger_id)
 
 def convert_to_ev_from_metadata(root, xml_filename, config):
     """Parses bldg_id from filename and routes to ev component adder"""
@@ -291,9 +306,7 @@ if __name__ == "__main__":
         output_path = Path(OUTPUT_DIR)
         
         for xml_file in output_path.rglob('*.xml'):
-            
             try:
-                # Dynamically register namespaces
                 for event, (prefix, uri) in ET.iterparse(xml_file, events=['start-ns']):
                     ET.register_namespace(prefix, uri)
                 
