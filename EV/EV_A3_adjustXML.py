@@ -3,7 +3,7 @@ Author: Thomas Metzler
 Adjusts EV properties in the XML file that OCHRE will read.
 Updated to dynamically convert all systems to EV chargers, assign 
 metadata-linked vehicles, and configure matching service feeders and branch circuits.
-Enforces strict HPXML XSD schema sequence for all inserted tags.
+Enforces strict HPXML XSD schema sequence via node sorting.
 """
 
 import shutil
@@ -84,8 +84,61 @@ EV_CONVERSION_CONFIG = {
 }
 
 # ---------------------------------------------------------
+# HPXML SCHEMA SORTING LISTS
+# ---------------------------------------------------------
+# Ensures elements appended to <Systems> obey exact schema ordering
+SYSTEMS_ORDER = [
+    "SystemIdentifier",
+    "HVAC",
+    "MechanicalVentilation",
+    "CombustionVentilation",
+    "WaterHeating",
+    "SolarThermal",
+    "Photovoltaics",
+    "ElectricPanels",
+    "ElectricalLoadCenter",
+    "Batteries",
+    "Vehicles",
+    "ElectricVehicleChargers",
+    "Generators",
+    "Pools",
+    "PermanentSpas",
+    "HotTubs",
+    "PlugLoads",
+    "FuelLoads"
+]
+
+ELEC_ORDER = [
+    "SystemIdentifier",
+    "Voltage",
+    "MaximumCurrentRating",
+    "Capacity",
+    "OccupiedSpaces",
+    "TotalSpaces",
+    "BranchCircuits",
+    "BranchCircuit",
+    "ServiceFeeders",
+    "ServiceFeeder"
+]
+
+# ---------------------------------------------------------
 # HELPER FUNCTIONS
 # ---------------------------------------------------------
+
+def sort_hpxml_node(node, order_list):
+    """Sorts the children of an XML node based on a standardized schema order."""
+    if node is None:
+        return
+    
+    def get_order(child):
+        tag_name = child.tag.split('}')[-1]
+        try:
+            return order_list.index(tag_name)
+        except ValueError:
+            return len(order_list) # Unknown tags go to the end
+            
+    # Re-order the elements internally
+    node[:] = sorted(node, key=get_order)
 
 def parse_charge_fraction(val):
     if pd.isna(val): return 0.9
@@ -215,35 +268,36 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     ET.SubElement(fec, f'{ns}Units').text = 'kWh/mile'
     ET.SubElement(fec, f'{ns}Value').text = veh_specs["FuelEconomy"]
 
-    # --- 6. Enforce Schema Insertion Order ---
-    # Detach them from parent_node if they are currently attached
-    if vehicles_node in list(parent_node):
-        parent_node.remove(vehicles_node)
-    if chargers_node in list(parent_node):
-        parent_node.remove(chargers_node)
+    # --- 6. Append & Enforce Schema Order on Systems Node ---
+    if vehicles_node not in list(parent_node):
+        parent_node.append(vehicles_node)
+    if chargers_node not in list(parent_node):
+        parent_node.append(chargers_node)
         
-    # HPXML mandates: Vehicles -> ElectricVehicleChargers -> Generators
-    generators_node = parent_node.find(f'{ns}Generators')
-    if generators_node is not None:
-        insert_idx = list(parent_node).index(generators_node)
-    else:
-        insert_idx = len(parent_node)
-
-    # Insert backwards at the identical index so Vehicles remains before Chargers
-    parent_node.insert(insert_idx, chargers_node)
-    parent_node.insert(insert_idx, vehicles_node)
+    sort_hpxml_node(parent_node, SYSTEMS_ORDER)
 
     # --- 7. Service Feeder & Branch Circuit ---
     circuit_parent = root.find(f'.//{ns}ElectricalLoadCenter')
     
+    # Fallback for newer HPXML versions utilizing ElectricPanels
+    if circuit_parent is None:
+        circuit_parent = root.find(f'.//{ns}ElectricPanel')
+    
     if circuit_parent is not None:
+        # Determine targets (some HPXML versions use wrapper nodes, some don't)
+        branch_wrapper = circuit_parent.find(f'{ns}BranchCircuits')
+        circuit_target = branch_wrapper if branch_wrapper is not None else circuit_parent
+        
+        feeder_wrapper = circuit_parent.find(f'{ns}ServiceFeeders')
+        feeder_target = feeder_wrapper if feeder_wrapper is not None else circuit_parent
+
         all_circuits = root.findall(f'.//{ns}BranchCircuit')
         max_c_num = max([int(re.search(r'\d+', c.find(f'{ns}SystemIdentifier').get('id', '0')).group()) for c in all_circuits if c.find(f'{ns}SystemIdentifier') is not None] + [0])
         circuit_exists = any(c.find(f'{ns}AttachedToComponent') is not None and c.find(f'{ns}AttachedToComponent').get('idref') == charger_id for c in all_circuits)
         
         # Insert Branch Circuit first to respect schema load center sequence
         if not circuit_exists:
-            new_circuit = ET.SubElement(circuit_parent, f'{ns}BranchCircuit')
+            new_circuit = ET.SubElement(circuit_target, f'{ns}BranchCircuit')
             ET.SubElement(new_circuit, f'{ns}SystemIdentifier', id=f'BranchCircuit{max_c_num + 1}')
             ET.SubElement(new_circuit, f'{ns}Voltage').text = charger_config["Voltage"]
             ET.SubElement(new_circuit, f'{ns}MaximumCurrentRating').text = charger_config["MaxCurrentRating"]
@@ -255,12 +309,15 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
         feeder_exists = any(f.find(f'{ns}AttachedToComponent') is not None and f.find(f'{ns}AttachedToComponent').get('idref') == charger_id for f in all_feeders)
         
         if not feeder_exists:
-            new_feeder = ET.SubElement(circuit_parent, f'{ns}ServiceFeeder')
+            new_feeder = ET.SubElement(feeder_target, f'{ns}ServiceFeeder')
             ET.SubElement(new_feeder, f'{ns}SystemIdentifier', id=f'ServiceFeeder{max_f_num + 1}')
             ET.SubElement(new_feeder, f'{ns}LoadType').text = 'electric vehicle charging'
             ET.SubElement(new_feeder, f'{ns}PowerRating').text = charger_config["ChargingPower"]
             ET.SubElement(new_feeder, f'{ns}IsNewLoad').text = "false"
             ET.SubElement(new_feeder, f'{ns}AttachedToComponent', idref=charger_id)
+
+        # Enforce exact XML child sequence on the Electric Panel/Load Center 
+        sort_hpxml_node(circuit_parent, ELEC_ORDER)
 
 def convert_to_ev_from_metadata(root, xml_filename, config):
     """Parses bldg_id from filename and routes to ev component adder"""
