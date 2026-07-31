@@ -72,7 +72,7 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
         "in.state",
         "in.city",
         "in.geometry_building_type_recs",
-        "in.vehicle_electric_charger"
+        "in.electric_vehicle_charger"
         
     ]
     missing = [col for col in required_columns if col not in df.columns]

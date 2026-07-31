@@ -21,7 +21,9 @@ FL_DIR = SCRIPT_DIR.parent
 WORKING_DIR = FL_DIR.parent
 
 INPUT_DIR = WORKING_DIR / "All Portland Input Files"
-OUTPUT_DIR = WORKING_DIR / "Dryer All Portland Input Files"
+OUTPUT_DIR = WORKING_DIR / "EV All Portland Input Files"
+
+METADATA_DIR = WORKING_DIR / "Metadata" / "OR_upgrade0.csv"
 
 # ---------------------------------------------------------
 # CONFIGURATIONS
