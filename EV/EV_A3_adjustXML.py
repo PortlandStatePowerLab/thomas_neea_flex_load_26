@@ -152,15 +152,24 @@ def parse_charge_fraction(val):
     return 0.9 # Default fallback
 
 def get_building_metadata(bldg_id):
-    row = metadata_df[metadata_df['bldg_id'] == int(bldg_id)]
+    try:
+        row = metadata_df[metadata_df['bldg_id'] == int(bldg_id)]
+    except KeyError:
+        print(f"[Warning] Bldg {bldg_id}: 'bldg_id' column not found in metadata CSV!")
+        return None
+    except ValueError:
+        print(f"[Warning] Bldg {bldg_id}: Could not convert building ID to an integer.")
+        return None
+        
     if row.empty:
+        print(f"[Warning] Bldg {bldg_id}: No matching row found in metadata CSV.")
         return None
     return row.iloc[0]
 
 def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     meta = get_building_metadata(bldg_id)
     if meta is None:
-        print(f"[Warning] Bldg {bldg_id}: Metadata row not found. Skipping.")
+        print(f"[Warning] Bldg {bldg_id}: Metadata row check failed. Skipping.")
         return
     
     # 1. Determine Charger Level
@@ -171,6 +180,7 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     elif rand_val < rates["Level1"] + rates["Level2"]:
         charger_level = "2"
     else:
+        print(f"[Info] Bldg {bldg_id}: No charger chosen based on adoption rates (Rolled {rand_val:.3f}). Skipping.")
         return # No charger chosen
 
     charger_config = config["ChargerDetails"][charger_level]
@@ -186,8 +196,11 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     charge_loc = meta.get('in.electric_vehicle_charge_at_home', '80-99%')
     
     # NEW: Print exactly what is triggering the skip if the vehicle type doesn't match
-    if pd.isna(veh_type) or veh_type not in config["VehicleSpecs"]:
-        print(f"[Warning] Bldg {bldg_id}: veh_type '{veh_type}' missing or not in config. Skipping.")
+    if pd.isna(veh_type):
+        print(f"[Warning] Bldg {bldg_id}: 'in.electric_vehicle_battery' is missing or NaN in CSV. Skipping.")
+        return
+    if veh_type not in config["VehicleSpecs"]:
+        print(f"[Warning] Bldg {bldg_id}: veh_type '{veh_type}' not found in VehicleSpecs config dictionary. Skipping.")
         return
     
     veh_specs = config["VehicleSpecs"][veh_type]
@@ -203,6 +216,7 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     # Fallback to BuildingDetails if Systems somehow doesn't exist
     if parent_node is None:
         parent_node = root.find(f'.//{ns}BuildingDetails')
+        print(f"[Info] Bldg {bldg_id}: <Systems> not found, falling back to <BuildingDetails>.")
         
     if parent_node is None:
         print(f"[Warning] Bldg {bldg_id}: Neither <Systems> nor <BuildingDetails> found. Skipping.")
@@ -211,16 +225,20 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     # --- 3. Create or Locate Elements Independently ---
     vehicles_node = root.find(f'.//{ns}Vehicles')
     if vehicles_node is None:
+        print(f"[Info] Bldg {bldg_id}: Creating new <Vehicles> node.")
         vehicles_node = ET.Element(f'{ns}Vehicles')
     else:
+        print(f"[Info] Bldg {bldg_id}: Existing <Vehicles> node found. Overwriting contents.")
         for child in list(vehicles_node):
             vehicles_node.remove(child)
 
     chargers_node = root.find(f'.//{ns}ElectricVehicleChargers')
     charger_id = 'EVCharger1'
     if chargers_node is None:
+        print(f"[Info] Bldg {bldg_id}: Creating new <ElectricVehicleChargers> node.")
         chargers_node = ET.Element(f'{ns}ElectricVehicleChargers')
     else:
+        print(f"[Info] Bldg {bldg_id}: Existing <ElectricVehicleChargers> node found. Overwriting contents.")
         for child in list(chargers_node):
             chargers_node.remove(child)
 
@@ -271,8 +289,10 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     # --- 6. Append & Enforce Schema Order on Systems Node ---
     if vehicles_node not in list(parent_node):
         parent_node.append(vehicles_node)
+        print(f"[Info] Bldg {bldg_id}: Appended <Vehicles> to parent.")
     if chargers_node not in list(parent_node):
         parent_node.append(chargers_node)
+        print(f"[Info] Bldg {bldg_id}: Appended <ElectricVehicleChargers> to parent.")
         
     sort_hpxml_node(parent_node, SYSTEMS_ORDER)
 
@@ -282,6 +302,8 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
     # Fallback for newer HPXML versions utilizing ElectricPanels
     if circuit_parent is None:
         circuit_parent = root.find(f'.//{ns}ElectricPanel')
+        if circuit_parent is not None:
+            print(f"[Info] Bldg {bldg_id}: <ElectricalLoadCenter> missing. Falling back to <ElectricPanel>.")
     
     if circuit_parent is not None:
         # Determine targets (some HPXML versions use wrapper nodes, some don't)
@@ -303,6 +325,9 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
             ET.SubElement(new_circuit, f'{ns}MaximumCurrentRating').text = charger_config["MaxCurrentRating"]
             ET.SubElement(new_circuit, f'{ns}OccupiedSpaces').text = charger_config["OccupiedSpaces"]
             ET.SubElement(new_circuit, f'{ns}AttachedToComponent', idref=charger_id)
+            print(f"[Info] Bldg {bldg_id}: Added new BranchCircuit.")
+        else:
+            print(f"[Info] Bldg {bldg_id}: BranchCircuit already exists for {charger_id}.")
 
         all_feeders = root.findall(f'.//{ns}ServiceFeeder')
         max_f_num = max([int(re.search(r'\d+', f.find(f'{ns}SystemIdentifier').get('id', '0')).group()) for f in all_feeders if f.find(f'{ns}SystemIdentifier') is not None] + [0])
@@ -315,21 +340,34 @@ def add_ev_components(root, ns, ns_bracket, bldg_id, config):
             ET.SubElement(new_feeder, f'{ns}PowerRating').text = charger_config["ChargingPower"]
             ET.SubElement(new_feeder, f'{ns}IsNewLoad').text = "false"
             ET.SubElement(new_feeder, f'{ns}AttachedToComponent', idref=charger_id)
+            print(f"[Info] Bldg {bldg_id}: Added new ServiceFeeder.")
+        else:
+            print(f"[Info] Bldg {bldg_id}: ServiceFeeder already exists for {charger_id}.")
 
         # Enforce exact XML child sequence on the Electric Panel/Load Center 
         sort_hpxml_node(circuit_parent, ELEC_ORDER)
+    else:
+        print(f"[Warning] Bldg {bldg_id}: No <ElectricalLoadCenter> or <ElectricPanel> found! Cannot attach BranchCircuit or ServiceFeeder.")
+        
+    print(f"[Success] Bldg {bldg_id}: Successfully processed EV components.")
 
 def convert_to_ev_from_metadata(root, xml_filename, config):
-    """Parses bldg_id from filename and routes to ev component adder"""
+    """Parses bldg_id from the parent folder name and routes to ev component adder"""
     ns_match = re.match(r'\{.*\}', root.tag)
     ns_bracket = ns_match.group(0) if ns_match else ''
     
-    # Assumes filename contains the building ID (e.g. bldg000030.xml -> 30)
-    match = re.search(r'\d+', xml_filename.stem)
+    # Extract the name of the folder containing home.xml (e.g., 'bldg0000062-up00')
+    parent_folder_name = xml_filename.parent.name
+    
+    # Search for the building ID in the folder name
+    match = re.search(r'\d+', parent_folder_name)
+    
     if match:
         bldg_id = match.group()
+        print(f"\n--- Processing {parent_folder_name}/{xml_filename.name} (Extracted ID: {int(bldg_id)}) ---")
         add_ev_components(root, ns_bracket, ns_bracket, bldg_id, config)
-
+    else:
+        print(f"[Warning] Could not extract numeric bldg_id from path: {xml_filename}")
 # ---------------------------------------------------------
 # DUPLICATION LOGIC
 # ---------------------------------------------------------
@@ -388,8 +426,8 @@ if __name__ == "__main__":
                 tree.write(xml_file, encoding='UTF-8', xml_declaration=True)
                 
             except ET.ParseError as e:
-                print(f"Failed to parse XML for {xml_file}: {e}")
+                print(f"[Error] Failed to parse XML for {xml_file.name}: {e}")
             except Exception as e:
-                print(f"An error occurred while processing {xml_file}: {e}")
+                print(f"[Error] An error occurred while processing {xml_file.name}: {e}")
 
-        print("Batch update complete.")
+        print("\nBatch update complete.")
