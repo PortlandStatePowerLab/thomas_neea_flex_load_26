@@ -13,6 +13,7 @@ import os
 import shutil
 import datetime as dt
 import pandas as pd
+import xml.etree.ElementTree as ET
 from ochre import Dwelling
 from ochre.utils.schedule import ALL_SCHEDULE_NAMES
 import concurrent.futures
@@ -27,8 +28,8 @@ filename = 'EV_Test'
 Input_folder = "EV Input Files"
 
 # EV Control Settings
-CONTROL_MODE = 'load_fraction' # Choose 'load_fraction' or 'p_setpoint'
-CHARGER_POWER_W = 5600         # 1600 for Level 1, 5600 for Level 2 (Used only if CONTROL_MODE is 'p_setpoint')
+CONTROL_MODE = 'p_setpoint' # Choose 'load_fraction' or 'p_setpoint'
+DEFAULT_CHARGER_POWER_W = 5600 # Fallback 1600 for Level 1, 5600 for Level 2 (Dynamically checked per home below)
 
 # Setpoint Multipliers (1.0 = 100% capacity)
 LOAD_UP_PCT = 1.0   # Force charge at max capacity
@@ -41,6 +42,9 @@ DEFAULT_INPUT = ochre_dir / "defaults" / "Input Files"
 print("OCHRE installed at:", ochre_dir)
 
 DEFAULT_WEATHER = ochre_dir / "defaults" / "Weather" / "USA_OR_Portland.Intl.AP.726980_TMY3.epw"
+#DEFAULT_WEATHER = ochre_dir / "defaults" / "Weather" / "G4100510_2018.csv" 
+# ^ Incorrect format for the weather file, it doesn't want csv
+# G4100510 is Multnomah county weather station, code will complain this is missing but it doesn't work otherwise
 
 # Safe working folder (writable)
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -177,6 +181,37 @@ def filter_schedules(home_path):
     return filtered_sched_file
 
 #########################################
+# CHARGER PARSER HELPER
+#########################################
+
+def get_ev_charger_power(hpxml_path, default_w=5600):
+    """
+    Parses the home's HPXML file to determine if the EV uses a Level 1 or Level 2 charger.
+    Returns 1600 for Level 1, 5600 for Level 2.
+    """
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        
+        # Remove namespaces for easier tag matching
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+                
+        for ev in root.findall('.//ElectricVehicle'):
+            level_elem = ev.find('ChargerLevel')
+            if level_elem is not None and level_elem.text:
+                text_val = level_elem.text.strip().lower()
+                if '1' in text_val:
+                    return 1600
+                elif '2' in text_val:
+                    return 5600
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_w}. Error: {e}")
+    
+    return default_w
+
+#########################################
 # SIMULATION FUNCTION
 #########################################
 
@@ -186,6 +221,9 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
     results_dir = os.path.join(home_path, "Results")
     os.makedirs(results_dir, exist_ok=True)
+    
+    # Dynamically determine charger wattage for this specific home
+    home_charger_w = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_W)
 
     dwelling_args_local = {
         "start_time": Start,
@@ -210,7 +248,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
             sim_time=sim_time, 
             sched_cfg=schedule_cfg,
             control_mode=CONTROL_MODE,
-            charger_w=CHARGER_POWER_W
+            charger_w=home_charger_w
         )
         if control_cmd:
             sim_dwelling.update(control_signal=control_cmd)
@@ -342,4 +380,5 @@ def aggregate_results(homes, work_dir):
     
     print(f"Aggregated CSVs written!")
 
-aggregate_results(homes, WORKING_DIR)
+if __name__ == "__main__":
+    aggregate_results(homes, WORKING_DIR)

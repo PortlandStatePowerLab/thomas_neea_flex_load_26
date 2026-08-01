@@ -30,14 +30,14 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)  
 working_dir = os.path.dirname(fl_dir)  
 
-input_file_root = "Dryer_Test"
+input_file_root = "EV_Test"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
 input_file_1  = os.path.join(working_dir, input_file_name1 +".csv")
 input_file_2  = os.path.join(working_dir, input_file_name2 +".csv")
 
-output_append_dryerpower = "_dryer_power"
+output_append_dryerpower = "_EV_power"
 output_file_name1 = input_file_name1 + output_append_dryerpower + ".csv"
 output_file_name2 = input_file_name2 + output_append_dryerpower + ".csv"
 folder_path = os.path.join(working_dir, "Ready_data", input_file_root)
@@ -90,7 +90,7 @@ def process_data(input_file, output_file, wanted_col):
     cols = ['Time',
         "Total Electric Power (kW)",
         "Total Electric Energy (kWh)",
-        "Clothes Dryer Electric Power (kW)" 
+        "EV Electric Power (kW)" 
         ]
 
     #identify unwanted columns to drop
@@ -106,7 +106,7 @@ def process_data(input_file, output_file, wanted_col):
     # write data to csv
     df_pivot.to_csv(output_file, index=True)
 
-process_data(input_file_1, output_file_1, 'Clothes Dryer Electric Power (kW)')
-process_data(input_file_2, output_file_2, 'Clothes Dryer Electric Power (kW)')
+process_data(input_file_1, output_file_1, 'EV Electric Power (kW)')
+process_data(input_file_2, output_file_2, 'EV Electric Power (kW)')
 process_data(input_file_1, output_file_3, 'Total Electric Power (kW)')
 process_data(input_file_2, output_file_4, 'Total Electric Power (kW)')
