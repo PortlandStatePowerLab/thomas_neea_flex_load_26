@@ -24,12 +24,12 @@ import ochre
 # USER SETTINGS & EV CONFIGURATION
 #########################################
 
-filename = 'EV_Test_2'
+filename = 'EV_Test_5'
 Input_folder = "EV Input Files"
 
 # EV Control Settings
-CONTROL_MODE = 'p_setpoint' # Choose 'load_fraction' or 'p_setpoint'
-DEFAULT_CHARGER_POWER_KW = 5.6 # Fallback 1600 for Level 1, 5600 for Level 2 (Dynamically checked per home below)
+CONTROL_MODE = 'max_p' # Choose 'load_fraction', 'p_setpoint', or 'max_p'
+DEFAULT_CHARGER_POWER_KW = 5.6 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
 
 # Duty cycle Multipliers (1.0 = 100% capacity)
 LOAD_UP_PCT = 1.0   # Force charge at max capacity
@@ -75,7 +75,7 @@ my_schedule1 = {
 
 def shift_time(time_str, minutes):
     """Helper function to add minutes to an 'HH:MM' string."""
-    # Using 'dt' to match your 'import datetime as dt' alias perfectly
+    # Using 'dt' to match 'import datetime as dt' alias
     delta_t = dt.datetime.strptime(time_str, '%H:%M')
     new_delta_t = delta_t + dt.timedelta(minutes=minutes)
     return new_delta_t.strftime('%H:%M')
@@ -108,15 +108,22 @@ for i in range(bins):
 # EV CONTROL FUNCTION
 #########################################
 
-def determine_EV_control(sim_time, sched_cfg, control_mode, charger_w):
-    ctrl_signal = {'EV': {}}
+def determine_EV_control(sim_time, sched_cfg, control_mode, charger_kw, ev_name):
     base_date = sim_time.date()
+    # Inherit timezone from OCHRE's sim_time to prevent offset-naive comparison bugs
+    tz = sim_time.tzinfo 
     
     def get_time_range(key_prefix):
         if f'{key_prefix}_time' not in sched_cfg:
             return None, None
-        start = pd.to_datetime(f"{base_date} {sched_cfg[f'{key_prefix}_time']}")
-        end = start + pd.Timedelta(hours=sched_cfg[f'{key_prefix}_duration'])
+        
+        time_str = sched_cfg[f'{key_prefix}_time']
+        hours = sched_cfg[f'{key_prefix}_duration']
+        
+        # Use native datetime instead of pd.to_datetime for safe comparison with sim_time
+        hour, minute = map(int, time_str.split(':'))
+        start = dt.datetime(base_date.year, base_date.month, base_date.day, hour, minute, tzinfo=tz)
+        end = start + dt.timedelta(hours=hours)
         return start, end
 
     ranges = {
@@ -145,12 +152,30 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_w):
     elif state == 'Shed':
         fraction = SHED_PCT
 
-    # Format the control signal
+    # Format the control signal using the dynamically found ev_name
+    ctrl_signal = {ev_name: {}}
+    
     if control_mode == 'load_fraction':
-        ctrl_signal['EV']['Load Fraction'] = fraction
-    elif control_mode == 'p_setpoint':
-        ctrl_signal['EV']['P Setpoint'] = fraction * charger_w 
+        ctrl_signal[ev_name]['Load Fraction'] = fraction
         
+    elif control_mode == 'p_setpoint':
+        # Forces the power draw no matter what
+        ctrl_signal[ev_name]['P Setpoint'] = -abs(fraction * charger_kw)
+        
+    elif control_mode == 'max_p':
+        charge_limit = abs(fraction * charger_kw)
+        
+        if state == 'Load_Up':
+            # Force charging to soak up energy. A cap won't trigger a charge event.
+            ctrl_signal[ev_name]['P Setpoint'] = -charge_limit
+        elif state == 'Shed':
+            # Cap the charging speed.
+            # Because charging is negative, the "maximum" charging speed is actually P Min.
+            ctrl_signal[ev_name]['P Min'] = -charge_limit
+            
+            # We also pass Max P (which caps V2G discharge) to cover all OCHRE parser versions
+            ctrl_signal[ev_name]['Max P'] = charge_limit
+            
     return ctrl_signal
 
 #########################################
@@ -176,7 +201,7 @@ def filter_schedules(home_path):
 # CHARGER PARSER HELPER
 #########################################
 
-def get_ev_charger_power(hpxml_path, default_w=5600):
+def get_ev_charger_power(hpxml_path, default_kw=5.6):
     """
     Parses the home's HPXML file to determine if the EV uses a Level 1 or Level 2 charger.
     Returns 1600 for Level 1, 5600 for Level 2.
@@ -199,9 +224,9 @@ def get_ev_charger_power(hpxml_path, default_w=5600):
                 elif '2' in text_val:
                     return 5.6
     except Exception as e:
-        print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_w}. Error: {e}")
+        print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_kw}. Error: {e}")
     
-    return default_w
+    return default_kw
 
 #########################################
 # SIMULATION FUNCTION
@@ -227,11 +252,18 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "verbosity": 7,
     }
 
-   # Baseline (Default operation without forced signals)
+    # Baseline (Default operation without forced signals)
     base_dwelling = Dwelling(name="EV Baseline", **dwelling_args_local)
     for t_base in base_dwelling.sim_times:
         base_dwelling.update() 
     df_base, _, _ = base_dwelling.finalize()
+
+    # FIX 2: Dynamically identify the EV equipment name to ensure the dict key matches
+    ev_name = 'EV'
+    for equip in base_dwelling.equipment.keys():
+        if 'ev' in equip.lower() or 'electric vehicle' in equip.lower():
+            ev_name = equip
+            break
 
     # Controlled
     sim_dwelling = Dwelling(name="EV Controlled", **dwelling_args_local)
@@ -240,7 +272,8 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
             sim_time=sim_time, 
             sched_cfg=schedule_cfg,
             control_mode=CONTROL_MODE,
-            charger_w=home_charger_kw
+            charger_kw=home_charger_kw,
+            ev_name=ev_name # Pass the correct name so the command registers
         )
         if control_cmd:
             sim_dwelling.update(control_signal=control_cmd)
@@ -257,21 +290,19 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     target_base_cols = [
         "Time", 
         "Total Electric Power (kW)",
-        "Total Electric Energy (kWh)",
-        "EV SOC (-)"
+        "Total Electric Energy (kWh)"
     ]
     
-    # Dynamically find the EV power column. It might be named differently depending on OCHRE versions 
-    # e.g., 'EV Electric Power (kW)', 'EV Power (kW)', 'EV Active Power (kW)'
-    ev_cols_ctrl = [col for col in df_ctrl.columns if 'ev' in col.lower() and 'power' in col.lower()]
-    ev_cols_base = [col for col in df_base.columns if 'ev' in col.lower() and 'power' in col.lower()]
-
-    # df_ctrl.to_csv(os.path.join(results_dir, 'ev_baseline.csv'), index=False)
+    # Dynamically find the EV power and SOC columns regardless of unit labeling
+    ev_pwr_cols_ctrl = [c for c in df_ctrl.columns if ('ev' in c.lower() or 'vehicle' in c.lower()) and 'power' in c.lower()]
+    ev_pwr_cols_base = [c for c in df_base.columns if ('ev' in c.lower() or 'vehicle' in c.lower()) and 'power' in c.lower()]
     
-    CTRL_COLS = target_base_cols + ev_cols_ctrl
-    BASE_COLS = target_base_cols + ev_cols_base
+    ev_soc_cols_ctrl = [c for c in df_ctrl.columns if 'soc' in c.lower() and ('ev' in c.lower() or 'vehicle' in c.lower())]
+    ev_soc_cols_base = [c for c in df_base.columns if 'soc' in c.lower() and ('ev' in c.lower() or 'vehicle' in c.lower())]
     
-    # Keep only the columns that actually exist in the dataframe
+    CTRL_COLS = target_base_cols + ev_pwr_cols_ctrl + ev_soc_cols_ctrl
+    BASE_COLS = target_base_cols + ev_pwr_cols_base + ev_soc_cols_base
+    
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
     df_base = df_base[[c for c in BASE_COLS if c in df_base.columns]]
         
