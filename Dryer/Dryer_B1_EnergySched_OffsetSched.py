@@ -24,10 +24,10 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'Dryer_Test_8'
+filename = 'Dryer_Test_10'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
-Input_folder = "Dryer Input Files 2"
+Input_folder = "Dryer Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -97,13 +97,13 @@ count = 0
 # Schedule variant
 my_schedule1 = {
     'M_LU_time': '07:00',
-    'M_LU_duration': 1,
+    'M_LU_duration': 0,
     'M_S_time': '08:00',
-    'M_S_duration': 4,
+    'M_S_duration': 5,
     'E_ALU_time': '15:00',
-    'E_ALU_duration': 1,
-    'E_S_time': '16:00',
-    'E_S_duration': 4
+    'E_ALU_duration': 0,
+    'E_S_time': '17:00',
+    'E_S_duration': 5
 }
 
 def shift_time(time_str, minutes):
@@ -117,10 +117,10 @@ def shift_time(time_str, minutes):
 my_schedule = []
 
 #minutes you will offset schedules
-timestep = 0
+timestep = 15
 
 #number of bins
-bins = 8
+bins = 4
 
 # Generate schedules with offsets
 for i in range(bins):
@@ -136,16 +136,6 @@ for i in range(bins):
         # Note: durations remain exactly the same across all schedules
             
     my_schedule.append(new_sched)
-
-
-my_schedule1 = my_schedule[0]
-my_schedule2 = my_schedule[1]
-my_schedule3 = my_schedule[2]
-my_schedule4 = my_schedule[3]
-my_schedule5 = my_schedule[4]
-my_schedule6 = my_schedule[5]
-my_schedule7 = my_schedule[6]
-my_schedule8 = my_schedule[7]
 
 #########################################
 # TEMPERATURE CONVERSIONS F to C
@@ -217,12 +207,7 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     
     # Filter valid columns
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    # print("\n\n============\n")
-    # for col in df_sched.columns:
-    #     if col in valid_schedule_names:
-    #         print(col)
-    # print("\n\n============\n")
-    # quit ()
+
     filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
     df_sched = df_sched[filtered_columns].copy()
     

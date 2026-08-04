@@ -28,7 +28,7 @@ filename = 'EV_Test_2'
 Input_folder = "EV Input Files"
 
 # EV Control Settings
-CONTROL_MODE = 'load_fraction' # Choose 'load_fraction' or 'p_setpoint'
+CONTROL_MODE = 'p_setpoint' # Choose 'load_fraction' or 'p_setpoint'
 DEFAULT_CHARGER_POWER_W = 5600 # Fallback 1600 for Level 1, 5600 for Level 2 (Dynamically checked per home below)
 
 # Setpoint Multipliers (1.0 = 100% capacity)
