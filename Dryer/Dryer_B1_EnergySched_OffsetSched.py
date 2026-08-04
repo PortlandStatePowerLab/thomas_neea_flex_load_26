@@ -24,10 +24,10 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'Dryer_Test'
+filename = 'Dryer_Test_7'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
-Input_folder = "Dryer Input Files"
+Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -96,14 +96,14 @@ count = 0
 
 # Schedule variant
 my_schedule1 = {
-    'M_LU_time': '06:30',
+    'M_LU_time': '07:00',
     'M_LU_duration': 1,
-    'M_S_time': '07:30',
+    'M_S_time': '08:00',
     'M_S_duration': 4,
-    'E_ALU_time': '13:00',
+    'E_ALU_time': '15:00',
     'E_ALU_duration': 1,
-    'E_S_time': '14:00',
-    'E_S_duration': 7
+    'E_S_time': '16:00',
+    'E_S_duration': 4
 }
 
 def shift_time(time_str, minutes):
@@ -117,7 +117,7 @@ def shift_time(time_str, minutes):
 my_schedule = []
 
 #minutes you will offset schedules
-timestep = 30
+timestep = 0
 
 #number of bins
 bins = 8
@@ -195,7 +195,7 @@ def determine_hvac_control(sim_time, sched_cfg, **kwargs):
         })
     elif ranges['M_S'][0] <= sim_time < ranges['M_S'][1] or ranges['E_S'][0] <= sim_time < ranges['E_S'][1]:
         ctrl_signal['Clothes Dryer'].update({
-            'Load Fraction': 0
+            'Load Fraction': 1
         })
 
     return ctrl_signal
@@ -204,29 +204,99 @@ def determine_hvac_control(sim_time, sched_cfg, **kwargs):
 # SCHEDULE FILTERING
 #########################################
 
-def filter_schedules(home_path):
+def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
+    """
+    Creates a baseline schedule (unmodified dryer) and a controlled schedule 
+    (dryer load shifted out of shed periods).
+    """
     orig_sched_file = os.path.join(home_path, CSV_ADDRESS)
-    filtered_sched_file = os.path.join(home_path, 'filtered_schedules.csv')
+    base_sched_file = os.path.join(home_path, 'baseline_schedules.csv')
+    ctrl_sched_file = os.path.join(home_path, 'controlled_schedules.csv')
 
     df_sched = pd.read_csv(orig_sched_file)
+    
+    # Filter valid columns
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
+    # print("\n\n============\n")
+    # for col in df_sched.columns:
+    #     if col in valid_schedule_names:
+    #         print(col)
+    # print("\n\n============\n")
+    # quit ()
     filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
-    dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
-    if dropped_columns:
-        print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
+    df_sched = df_sched[filtered_columns].copy()
+    
+    # Save baseline
+    df_sched.to_csv(base_sched_file, index=False)
 
-    df_sched_filtered = df_sched[filtered_columns]
-    df_sched_filtered.to_csv(filtered_sched_file, index=False)
-    return filtered_sched_file
+    # Find the dryer column
+    dryer_cols = [c for c in df_sched.columns if 'dryer' in c.lower()]
+    if not dryer_cols:
+        df_sched.to_csv(ctrl_sched_file, index=False) # No dryer to shift
+        return base_sched_file, ctrl_sched_file
+    
+    dryer_col = dryer_cols[0]
+
+    # Create dummy datetime index for easy time-of-day masking
+    df_sched['Datetime'] = pd.date_range(start="2018-01-01 00:00:00", periods=len(df_sched), freq=f'{t_res_minutes}min')
+    df_sched.set_index('Datetime', inplace=True)
+    
+    new_dryer = df_sched[dryer_col].copy()
+
+    # Process each shed period separately
+    for prefix in ['M_S', 'E_S']:
+        start_str = sched_cfg[f'{prefix}_time']
+        duration_hrs = sched_cfg[f'{prefix}_duration']
+        if duration_hrs <= 0: continue
+        
+        start_time = pd.to_datetime(start_str).time()
+        end_time = (pd.to_datetime(start_str) + pd.Timedelta(hours=duration_hrs)).time()
+        
+        # Mask for the shed time
+        time_series = df_sched.index.time
+        if start_time < end_time:
+            mask = (time_series >= start_time) & (time_series < end_time)
+        else: # Handles midnight crossover
+            mask = (time_series >= start_time) | (time_series < end_time)
+            
+        # Shift load day by day
+        for date, group in df_sched.groupby(df_sched.index.date):
+            day_mask = mask[df_sched.index.date == date]
+            if not day_mask.any(): continue
+            
+            shed_load = group.loc[day_mask, dryer_col]
+            if shed_load.sum() > 0:
+                # Extract non-zero values to retain the actual machine profile
+                vals_to_shift = shed_load[shed_load > 0].values
+                
+                # Zero out the shed period in the new schedule
+                new_dryer.loc[group.index[day_mask]] = 0
+                
+                # Find valid indices immediately after the shed ends
+                after_shed_mask = (group.index.time >= end_time)
+                available_indices = group.index[after_shed_mask]
+                
+                if len(vals_to_shift) > 0 and len(available_indices) > 0:
+                    n = min(len(vals_to_shift), len(available_indices))
+                    # Add the shifted profile back in
+                    new_dryer.loc[available_indices[:n]] += vals_to_shift[:n]
+                    
+    df_sched[dryer_col] = new_dryer
+    df_sched.reset_index(drop=True, inplace=True)
+    
+    # Save controlled schedule
+    df_sched.to_csv(ctrl_sched_file, index=False)
+    
+    return base_sched_file, ctrl_sched_file
 
 #########################################
 # SIMULATION FUNCTION
 #########################################
 
 def simulate_home(home_path, weather_file_path, schedule_cfg):
-
-    filtered_sched_file = filter_schedules(home_path)
-    hpxml_file = os.path.join(home_path, XML_ADDRESS)
+    # Get separate schedule files
+    base_sched_file, ctrl_sched_file = prepare_schedules(home_path, schedule_cfg, t_res)
+    
     results_dir = os.path.join(home_path, "Results")
     os.makedirs(results_dir, exist_ok=True)
 
@@ -234,31 +304,34 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "start_time": Start,
         "time_res": dt.timedelta(minutes=t_res),
         "duration": dt.timedelta(days=Duration),
-        "hpxml_file": hpxml_file,
-        "hpxml_schedule_file": filtered_sched_file,
+        "hpxml_file": os.path.join(home_path, XML_ADDRESS),
+        "initialization_time": dt.timedelta(days=1),
         "weather_file": weather_file_path,
         "verbosity": 7,
     }
 
-   # Baseline
-    base_dwelling = Dwelling(name="Dryer Baseline", **dwelling_args_local)
-    for t_base in base_dwelling.sim_times:
-        base_ctrl = {"Clothes Dryer": { "Load Fraction": 1}}
-        base_dwelling.update(control_signal=base_ctrl)
+    # Run Baseline (Uses un-shifted schedule)
+    base_dwelling = Dwelling(
+        name="Dryer Baseline", 
+        hpxml_schedule_file=base_sched_file, 
+        **dwelling_args_local
+    )
     df_base, _, _ = base_dwelling.finalize()
 
-    # Controlled
-    sim_dwelling = Dwelling(name="Dryer Controlled", **dwelling_args_local)
-    for sim_time in sim_dwelling.sim_times:
-        # Fetch the baseline heating schedule
-        control_cmd = determine_hvac_control(sim_time=sim_time, sched_cfg=schedule_cfg)
-        sim_dwelling.update(control_signal=control_cmd)
+    # print(df_base)
+    # quit()
+
+    # Run Controlled (Uses shifted schedule)
+    sim_dwelling = Dwelling(
+        name="Dryer Controlled", 
+        hpxml_schedule_file=ctrl_sched_file, 
+        **dwelling_args_local
+    )
     df_ctrl, _, _ = sim_dwelling.finalize()
 
-
-    df_ctrl = remove_first_day(df_ctrl, Start)
-    df_base = remove_first_day(df_base, Start)
-    
+    # Formatting and saving results
+    # df_ctrl = remove_first_day(df_ctrl, Start)
+    # df_base = remove_first_day(df_base, Start)
 
     CTRL_COLS = [
         "Time", 
@@ -266,18 +339,24 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "Total Electric Energy (kWh)",
         "Clothes Dryer Electric Power (kW)" 
     ]
-    BASE_COLS = CTRL_COLS
     
-
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
+    df_base = df_base[[c for c in CTRL_COLS if c in df_base.columns]]
 
-    df_base = df_base[[c for c in BASE_COLS if c in df_base.columns]]
-        
+    # for col in df_ctrl.columns:
+    #     print("\n\n")
+    #     print("="*70)
+    #     print(col)
+    #     print("="*70)
+    # quit()
     
     df_ctrl.to_csv(os.path.join(results_dir, 'hpwh_controlled.csv'), index=False)
     df_base.to_csv(os.path.join(results_dir, 'hpwh_baseline.csv'), index=False)
 
-
+    print("="*70)
+    print(len(df_ctrl.notna ()))
+    print(len(df_ctrl))
+    print("="*70)
     return df_ctrl, df_base
 
 #########################################
@@ -310,6 +389,8 @@ def remove_first_day(df, start_date):
     Works whether 'Time' is a column or the index.
     """
     # If 'Time' column doesn't exist, try using the index
+    print(df)
+    quit()
     if 'Time' not in df.columns:
         df = df.reset_index()
         if 'index' in df.columns:
@@ -372,7 +453,9 @@ if __name__ == "__main__":
             try:
                 f.result()  # forces execution and raises exceptions if any
             except Exception as e:
-                print("Simulation failed:", e)
+                print("\n\nSimulation failed:", e)
+                print("Quitting ...")
+                quit()
 
     print("All simulations complete!")
 

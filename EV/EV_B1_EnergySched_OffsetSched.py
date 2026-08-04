@@ -24,11 +24,11 @@ import ochre
 # USER SETTINGS & EV CONFIGURATION
 #########################################
 
-filename = 'EV_Test'
+filename = 'EV_Test_2'
 Input_folder = "EV Input Files"
 
 # EV Control Settings
-CONTROL_MODE = 'p_setpoint' # Choose 'load_fraction' or 'p_setpoint'
+CONTROL_MODE = 'load_fraction' # Choose 'load_fraction' or 'p_setpoint'
 DEFAULT_CHARGER_POWER_W = 5600 # Fallback 1600 for Level 1, 5600 for Level 2 (Dynamically checked per home below)
 
 # Setpoint Multipliers (1.0 = 100% capacity)
@@ -260,14 +260,25 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     df_ctrl = remove_first_day(df_ctrl, Start)
     df_base = remove_first_day(df_base, Start)
     
-    CTRL_COLS = [
+    # We define our target columns, but we also dynamically grab any EV related columns
+    # so they aren't accidentally dropped if the name is slightly different in this OCHRE version.
+    target_base_cols = [
         "Time", 
         "Total Electric Power (kW)",
-        "Total Electric Energy (kWh)",
-        "EV Electric Power (kW)" 
+        "Total Electric Energy (kWh)"
     ]
-    BASE_COLS = CTRL_COLS
     
+    # Dynamically find the EV power column. It might be named differently depending on OCHRE versions 
+    # e.g., 'EV Electric Power (kW)', 'EV Power (kW)', 'EV Active Power (kW)'
+    ev_cols_ctrl = [col for col in df_ctrl.columns if 'ev' in col.lower() and 'power' in col.lower()]
+    ev_cols_base = [col for col in df_base.columns if 'ev' in col.lower() and 'power' in col.lower()]
+
+    # df_ctrl.to_csv(os.path.join(results_dir, 'ev_baseline.csv'), index=False)
+    
+    CTRL_COLS = target_base_cols + ev_cols_ctrl
+    BASE_COLS = target_base_cols + ev_cols_base
+    
+    # Keep only the columns that actually exist in the dataframe
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
     df_base = df_base[[c for c in BASE_COLS if c in df_base.columns]]
         

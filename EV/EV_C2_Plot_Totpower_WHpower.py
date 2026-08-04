@@ -18,14 +18,14 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir) 
 working_dir = os.path.dirname(fl_dir)  
 
-input_file_root = "Dryer_Test"
+input_file_root = "EV_Test_2"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
 input_file_1  = os.path.join(working_dir, input_file_name1 +".csv")
 input_file_2  = os.path.join(working_dir, input_file_name2 +".csv")
 
-output_append_dryerpower = "_dryer_power"
+output_append_dryerpower = "_EV_power"
 output_file_name1 = input_file_name1 + output_append_dryerpower + ".csv"
 output_file_name2 = input_file_name2 + output_append_dryerpower + ".csv"
 folder_path = os.path.join(working_dir, "Ready_data", input_file_root)
@@ -38,7 +38,7 @@ output_file_name4 = input_file_name2 + output_append_totpower + ".csv"
 output_file_3 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name3)
 output_file_4 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name4)
 
-photo_file_1 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_WH_power_plot.png")
+photo_file_1 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_EV_power_plot.png")
 photo_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_Total_power_plot.png")
 
 
@@ -107,9 +107,9 @@ def plot_data(baseline_file, controlled_file, title, photo_file, ax):
 
     plt.savefig(photo_file, dpi=300, bbox_inches='tight')  # Save the figure
 
-save_avg(output_file_1)
-save_avg(output_file_2)
-plot_data(output_file_1, output_file_2, 'Average Power Consumption per Dryer System', photo_file_1, "ax1")
+# save_avg(output_file_1)
+# save_avg(output_file_2)
+# plot_data(output_file_1, output_file_2, 'Average Power Consumption per EV System', photo_file_1, "ax1")
 
 save_avg(output_file_3)
 save_avg(output_file_4)
