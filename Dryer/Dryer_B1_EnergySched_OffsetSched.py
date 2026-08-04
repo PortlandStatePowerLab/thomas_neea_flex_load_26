@@ -24,7 +24,7 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'Dryer_Test_7'
+filename = 'Dryer_Test_8'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
 Input_folder = "Dryer Input Files 2"
@@ -305,7 +305,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "time_res": dt.timedelta(minutes=t_res),
         "duration": dt.timedelta(days=Duration),
         "hpxml_file": os.path.join(home_path, XML_ADDRESS),
-        "initialization_time": dt.timedelta(days=1),
+        # "initialization_time": dt.timedelta(days=1),
         "weather_file": weather_file_path,
         "verbosity": 7,
     }
@@ -316,6 +316,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         hpxml_schedule_file=base_sched_file, 
         **dwelling_args_local
     )
+    base_dwelling.simulate()  # <--- ADD THIS LINE
     df_base, _, _ = base_dwelling.finalize()
 
     # print(df_base)
@@ -327,11 +328,12 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         hpxml_schedule_file=ctrl_sched_file, 
         **dwelling_args_local
     )
+    sim_dwelling.simulate()
     df_ctrl, _, _ = sim_dwelling.finalize()
 
     # Formatting and saving results
-    # df_ctrl = remove_first_day(df_ctrl, Start)
-    # df_base = remove_first_day(df_base, Start)
+    df_ctrl = remove_first_day(df_ctrl, Start)
+    df_base = remove_first_day(df_base, Start)
 
     CTRL_COLS = [
         "Time", 
@@ -389,8 +391,6 @@ def remove_first_day(df, start_date):
     Works whether 'Time' is a column or the index.
     """
     # If 'Time' column doesn't exist, try using the index
-    print(df)
-    quit()
     if 'Time' not in df.columns:
         df = df.reset_index()
         if 'index' in df.columns:
@@ -454,8 +454,6 @@ if __name__ == "__main__":
                 f.result()  # forces execution and raises exceptions if any
             except Exception as e:
                 print("\n\nSimulation failed:", e)
-                print("Quitting ...")
-                quit()
 
     print("All simulations complete!")
 
@@ -525,6 +523,6 @@ def aggregate_results(homes, work_dir):
     print(f"Aggregated CSVs written! {count}")
 
 
-
-aggregate_results(homes, WORKING_DIR)
+if __name__ == "__main__":
+    aggregate_results(homes, WORKING_DIR)
 

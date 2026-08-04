@@ -34,7 +34,6 @@ DEFAULT_CHARGER_POWER_W = 5600 # Fallback 1600 for Level 1, 5600 for Level 2 (Dy
 # Setpoint Multipliers (1.0 = 100% capacity)
 LOAD_UP_PCT = 1.0   # Force charge at max capacity
 SHED_PCT = 0.25     # Shed capacity (e.g., charge at only 25% max power)
-V2G_PCT = -1.0      # Vehicle to Grid (Negative indicates discharging back to grid)
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -72,8 +71,6 @@ my_schedule1 = {
     'E_ALU_duration': 1,
     'E_S_time': '14:00',
     'E_S_duration': 4,
-    'V2G_time': '18:00',     # Vehicle-to-Grid start time
-    'V2G_duration': 3        # Vehicle-to-Grid duration
 }
 
 def shift_time(time_str, minutes):
@@ -126,8 +123,7 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_w):
         'Load_Up_M': get_time_range('M_LU'),
         'Load_Up_E': get_time_range('E_ALU'),
         'Shed_M': get_time_range('M_S'),
-        'Shed_E': get_time_range('E_S'),
-        'V2G': get_time_range('V2G'),
+        'Shed_E': get_time_range('E_S')
     }
 
     # Determine current operational state
@@ -138,8 +134,6 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_w):
                 state = 'Load_Up'
             elif 'Shed' in state_name:
                 state = 'Shed'
-            elif 'V2G' in state_name:
-                state = 'V2G'
             break 
             
     if state == 'Normal':
@@ -150,8 +144,6 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_w):
         fraction = LOAD_UP_PCT
     elif state == 'Shed':
         fraction = SHED_PCT
-    elif state == 'V2G':
-        fraction = V2G_PCT
 
     # Format the control signal
     if control_mode == 'load_fraction':
@@ -265,7 +257,8 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     target_base_cols = [
         "Time", 
         "Total Electric Power (kW)",
-        "Total Electric Energy (kWh)"
+        "Total Electric Energy (kWh)",
+        "EV SOC"
     ]
     
     # Dynamically find the EV power column. It might be named differently depending on OCHRE versions 
