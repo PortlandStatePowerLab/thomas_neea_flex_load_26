@@ -67,7 +67,8 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
     df = pd.read_csv(source_file, low_memory=False)
 
     required_columns = [
-        "bldg_id"
+        "bldg_id",
+        "in.battery"
     ]
 
     missing = [col for col in required_columns if col not in df.columns]
@@ -76,11 +77,11 @@ def recreate_files(source_file: Path = SOURCE_FILE, output_dir: Path = OUTPUT_DI
 
 
     base_filter = (
-        (df["bldg_id"] == 110360)
+        (df["in.battery"].notna())
 
     )
 
-    df[base_filter].to_csv (output_dir / 'TX_Filtered.csv', index=False)
+    df[base_filter].to_csv (output_dir / 'Battery_Filtered.csv', index=False)
 
 
 if __name__ == "__main__":

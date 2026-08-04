@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)  
 working_dir = os.path.dirname(fl_dir)  
 
-input_file_root = "Heat_OriginalHP_Test"
+input_file_root = "Heat_OffsetSched_Test"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"

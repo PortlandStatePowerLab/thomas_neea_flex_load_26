@@ -24,10 +24,10 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'Heat_OriginalHP_Test'
+filename = 'Heat_OffsetSched_Test'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
-Input_folder = "Heat Input Files"
+Input_folder = "HVAC All Portland Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -52,7 +52,7 @@ CSV_ADDRESS = "in.schedules.csv"
 
 
 # Simulation parameters
-Start = dt.datetime(2018, 1, 11, 0, 0)
+Start = dt.datetime(2018, 2, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
@@ -96,13 +96,13 @@ count = 0
 
 # Schedule variant
 my_schedule1 = {
-    'M_LU_time': '06:30',
-    'M_LU_duration': 0,
-    'M_S_time': '07:30',
-    'M_S_duration': 0,
-    'E_ALU_time': '13:00',
+    'M_LU_time': '02:30',
+    'M_LU_duration': 1,
+    'M_S_time': '03:30',
+    'M_S_duration': 5,
+    'E_ALU_time': '14:00',
     'E_ALU_duration': 1,
-    'E_S_time': '14:00',
+    'E_S_time': '15:00',
     'E_S_duration': 7
 }
 
