@@ -29,9 +29,9 @@ Input_folder = "EV Input Files"
 
 # EV Control Settings
 CONTROL_MODE = 'p_setpoint' # Choose 'load_fraction' or 'p_setpoint'
-DEFAULT_CHARGER_POWER_W = 5600 # Fallback 1600 for Level 1, 5600 for Level 2 (Dynamically checked per home below)
+DEFAULT_CHARGER_POWER_KW = 5.6 # Fallback 1600 for Level 1, 5600 for Level 2 (Dynamically checked per home below)
 
-# Setpoint Multipliers (1.0 = 100% capacity)
+# Duty cycle Multipliers (1.0 = 100% capacity)
 LOAD_UP_PCT = 1.0   # Force charge at max capacity
 SHED_PCT = 0.25     # Shed capacity (e.g., charge at only 25% max power)
 
@@ -87,7 +87,7 @@ my_schedule = []
 timestep = 30
 
 #number of bins
-bins = 8
+bins = 1
 
 # Generate schedules with offsets
 for i in range(bins):
@@ -195,9 +195,9 @@ def get_ev_charger_power(hpxml_path, default_w=5600):
             if level_elem is not None and level_elem.text:
                 text_val = level_elem.text.strip().lower()
                 if '1' in text_val:
-                    return 1600
+                    return 1.6
                 elif '2' in text_val:
-                    return 5600
+                    return 5.6
     except Exception as e:
         print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_w}. Error: {e}")
     
@@ -215,7 +215,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     os.makedirs(results_dir, exist_ok=True)
     
     # Dynamically determine charger wattage for this specific home
-    home_charger_w = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_W)
+    home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
 
     dwelling_args_local = {
         "start_time": Start,
@@ -240,7 +240,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
             sim_time=sim_time, 
             sched_cfg=schedule_cfg,
             control_mode=CONTROL_MODE,
-            charger_w=home_charger_w
+            charger_w=home_charger_kw
         )
         if control_cmd:
             sim_dwelling.update(control_signal=control_cmd)
@@ -258,7 +258,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "Time", 
         "Total Electric Power (kW)",
         "Total Electric Energy (kWh)",
-        "EV SOC"
+        "EV SOC (-)"
     ]
     
     # Dynamically find the EV power column. It might be named differently depending on OCHRE versions 
