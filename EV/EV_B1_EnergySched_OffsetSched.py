@@ -24,7 +24,7 @@ import ochre
 # USER SETTINGS & EV CONFIGURATION
 #########################################
 
-filename = 'EV_Test_6'
+filename = 'EV_Test_7'
 Input_folder = "EV Input Files"
 
 # EV Control Settings
@@ -144,7 +144,7 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_kw, ev_name)
             break 
             
     if state == 'Normal':
-        return {} # Return empty to let OCHRE run the default schedule
+        return {} 
 
     # Map state to percentage
     if state == 'Load_Up':
@@ -155,9 +155,7 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_kw, ev_name)
     # Format the control signal using the dynamically found ev_name
     ctrl_signal = {ev_name: {}}
     
-    # Convert kW to Watts. OCHRE setpoints for power are in Watts!
-    charger_w = charger_kw * 1000
-    
+    # FIX 2: Send raw kW. OCHRE EVs (unlike HVAC) expect kW limits.
     if control_mode == 'load_fraction':
         ctrl_signal[ev_name]['Load Fraction'] = fraction
         
@@ -166,7 +164,7 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_kw, ev_name)
         ctrl_signal[ev_name]['P Setpoint'] = -abs(fraction * charger_kw)
         
     elif control_mode == 'max_p':
-        charge_limit = abs(fraction * charger_w)
+        charge_limit = abs(fraction * charger_kw)
         
         if state == 'Load_Up':
             # Force charging to soak up energy. A cap won't trigger a charge event.
@@ -192,8 +190,14 @@ def filter_schedules(home_path):
     df_sched = pd.read_csv(orig_sched_file)
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
     
-    # Protect any column with 'ev' in the name so the parking schedule survives
-    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names or 'ev' in col.lower()]
+    # Catch any variation of EV / Vehicle schedules
+    filtered_columns = [
+        col for col in df_sched.columns 
+        if col in valid_schedule_names 
+        or 'ev' in col.lower() 
+        or 'vehicle' in col.lower()
+        or 'plug' in col.lower()
+    ]
     
     dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
     if dropped_columns:
@@ -247,6 +251,14 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     # Dynamically determine charger wattage for this specific home
     home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
 
+    # Force any EV found to be modeled as a dynamic, controllable battery 
+    # and start at a low SOC so it has room to charge on Day 2.
+    ev_config = {
+        "equipment_type": "EV",
+        "initial_soc": 0.2, 
+        "charger_capacity": home_charger_kw
+    }
+
     dwelling_args_local = {
         "start_time": Start,
         "time_res": dt.timedelta(minutes=t_res),
@@ -255,13 +267,14 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
-        # Force OCHRE to build a controllable EV battery model
+        # Account for common HPXML naming variations
         "equipment_kwargs": {
-            "EV": {} 
+            "EV": ev_config,
+            "Electric Vehicle": ev_config
         }
     }
 
-    # Baseline (Default operation without forced signals)
+    # Baseline Run
     base_dwelling = Dwelling(name="EV Baseline", **dwelling_args_local)
     for t_base in base_dwelling.sim_times:
         base_dwelling.update() 
@@ -270,11 +283,11 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     # Dynamically identify the EV equipment name to ensure the dict key matches
     ev_name = 'EV'
     for equip in base_dwelling.equipment.keys():
-        if 'ev' in equip.lower() or 'electric vehicle' in equip.lower():
+        if 'ev' in equip.lower() or 'vehicle' in equip.lower():
             ev_name = equip
             break
 
-    # Controlled
+    # Controlled Run
     sim_dwelling = Dwelling(name="EV Controlled", **dwelling_args_local)
     for sim_time in sim_dwelling.sim_times:
         control_cmd = determine_EV_control(
@@ -294,20 +307,13 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     df_ctrl = remove_first_day(df_ctrl, Start)
     df_base = remove_first_day(df_base, Start)
     
-    # We define our target columns, but we also dynamically grab any EV related columns
-    # so they aren't accidentally dropped if the name is slightly different in this OCHRE version.
-    target_base_cols = [
-        "Time", 
-        "Total Electric Power (kW)",
-        "Total Electric Energy (kWh)"
-    ]
+    target_base_cols = ["Time", "Total Electric Power (kW)", "Total Electric Energy (kWh)"]
     
-    # These will now successfully find the "EV Electric Power (kW)" columns
+    # Catching the newly generated EV output columns
     ev_pwr_cols_ctrl = [c for c in df_ctrl.columns if ('ev' in c.lower() or 'vehicle' in c.lower()) and 'power' in c.lower()]
     ev_pwr_cols_base = [c for c in df_base.columns if ('ev' in c.lower() or 'vehicle' in c.lower()) and 'power' in c.lower()]
-    
-    ev_soc_cols_ctrl = [c for c in df_ctrl.columns if 'soc' in c.lower() and ('ev' in c.lower() or 'vehicle' in c.lower())]
-    ev_soc_cols_base = [c for c in df_base.columns if 'soc' in c.lower() and ('ev' in c.lower() or 'vehicle' in c.lower())]
+    ev_soc_cols_ctrl = [c for c in df_ctrl.columns if 'soc' in c.lower()]
+    ev_soc_cols_base = [c for c in df_base.columns if 'soc' in c.lower()]
     
     CTRL_COLS = target_base_cols + ev_pwr_cols_ctrl + ev_soc_cols_ctrl
     BASE_COLS = target_base_cols + ev_pwr_cols_base + ev_soc_cols_base
