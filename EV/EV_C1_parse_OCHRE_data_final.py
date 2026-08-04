@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)  
 working_dir = os.path.dirname(fl_dir)  
 
-input_file_root = "EV_Test"
+input_file_root = "EV_Test_2"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
@@ -89,8 +89,7 @@ def process_data(input_file, output_file, wanted_col):
 
     cols = ['Time',
         "Total Electric Power (kW)",
-        "Total Electric Energy (kWh)",
-        "EV Electric Power (kW)" 
+        "Total Electric Energy (kWh)", 
         ]
 
     #identify unwanted columns to drop
@@ -106,7 +105,7 @@ def process_data(input_file, output_file, wanted_col):
     # write data to csv
     df_pivot.to_csv(output_file, index=True)
 
-process_data(input_file_1, output_file_1, 'EV Electric Power (kW)')
-process_data(input_file_2, output_file_2, 'EV Electric Power (kW)')
+# process_data(input_file_1, output_file_1, 'EV Electric Power (kW)')
+# process_data(input_file_2, output_file_2, 'EV Electric Power (kW)')
 process_data(input_file_1, output_file_3, 'Total Electric Power (kW)')
 process_data(input_file_2, output_file_4, 'Total Electric Power (kW)')
