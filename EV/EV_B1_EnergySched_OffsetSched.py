@@ -19,19 +19,21 @@ from ochre.utils.schedule import ALL_SCHEDULE_NAMES
 import concurrent.futures
 from pathlib import Path
 import ochre
+import copy
+import traceback
 
 #########################################
 # USER SETTINGS & EV CONFIGURATION
 #########################################
 
-filename = 'EV_Test_7'
+filename = 'EV_Test_10'
 Input_folder = "EV Input Files"
 
 # EV Control Settings
 CONTROL_MODE = 'max_p' # Choose 'load_fraction', 'p_setpoint', or 'max_p'
 DEFAULT_CHARGER_POWER_KW = 5.6 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
 
-# Duty cycle Multipliers (1.0 = 100% capacity)
+# Duty Cycle Multipliers (1.0 = 100% capacity)
 LOAD_UP_PCT = 1.0   # Force charge at max capacity
 SHED_PCT = 0.25     # Shed capacity (e.g., charge at only 25% max power)
 
@@ -259,6 +261,41 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "charger_capacity": home_charger_kw
     }
 
+    # ---------------------------------------------------------
+    # 1. DISCOVERY RUN
+    # ---------------------------------------------------------
+    discovery_args = {
+        "start_time": Start,
+        "time_res": dt.timedelta(minutes=t_res),
+        "duration": dt.timedelta(hours=1), 
+        "hpxml_file": hpxml_file,
+        "hpxml_schedule_file": filtered_sched_file,
+        "weather_file": weather_file_path,
+        "verbosity": 0
+    }
+    
+    ev_names = []
+    try:
+        disc_dwelling = Dwelling(name="Discovery", **discovery_args)
+        ev_names = [eq for eq in disc_dwelling.equipment.keys() if 'ev' in eq.lower() or 'vehicle' in eq.lower()]
+    except Exception as e:
+        print(f"\n[FATAL ERROR] OCHRE cannot load {os.path.basename(home_path)} natively.")
+        print("Here is the internal OCHRE error:")
+        print(traceback.format_exc())
+        print("Skipping this home...\n")
+        # Return empty dataframes to safely skip this home without breaking the aggregator
+        empty_df = pd.DataFrame()
+        return empty_df, empty_df
+
+    # Now we only populate equipment_kwargs with the EXACT name(s) found.
+    # If the home has no EV, this dict remains safely empty.
+    equip_kwargs = {}
+    for ev_n in ev_names:
+        equip_kwargs[ev_n] = copy.deepcopy(ev_config)
+
+    # ---------------------------------------------------------
+    # 2. MASTER RUNS
+    # ---------------------------------------------------------
     dwelling_args_local = {
         "start_time": Start,
         "time_res": dt.timedelta(minutes=t_res),
@@ -267,36 +304,32 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
-        # Account for common HPXML naming variations
-        "equipment_kwargs": {
-            "EV": ev_config,
-            "Electric Vehicle": ev_config
-        }
+        "equipment_kwargs": equip_kwargs
     }
 
     # Baseline Run
-    base_dwelling = Dwelling(name="EV Baseline", **dwelling_args_local)
+    base_dwelling = Dwelling(name="EV Baseline", **copy.deepcopy(dwelling_args_local))
     for t_base in base_dwelling.sim_times:
         base_dwelling.update() 
     df_base, _, _ = base_dwelling.finalize()
 
-    # Dynamically identify the EV equipment name to ensure the dict key matches
-    ev_name = 'EV'
-    for equip in base_dwelling.equipment.keys():
-        if 'ev' in equip.lower() or 'vehicle' in equip.lower():
-            ev_name = equip
-            break
-
     # Controlled Run
-    sim_dwelling = Dwelling(name="EV Controlled", **dwelling_args_local)
+    sim_dwelling = Dwelling(name="EV Controlled", **copy.deepcopy(dwelling_args_local))
     for sim_time in sim_dwelling.sim_times:
-        control_cmd = determine_EV_control(
-            sim_time=sim_time, 
-            sched_cfg=schedule_cfg,
-            control_mode=CONTROL_MODE,
-            charger_kw=home_charger_kw,
-            ev_name=ev_name # Pass the correct name so the command registers
-        )
+        
+        control_cmd = {}
+        # Only attempt EV control if we actually found an EV in this home
+        if ev_names:
+            primary_ev = ev_names[0] # Control the first EV found
+            ev_ctrl = determine_EV_control(
+                sim_time=sim_time, 
+                sched_cfg=schedule_cfg,
+                control_mode=CONTROL_MODE,
+                charger_kw=home_charger_kw,
+                ev_name=primary_ev
+            )
+            control_cmd.update(ev_ctrl)
+
         if control_cmd:
             sim_dwelling.update(control_signal=control_cmd)
         else:
@@ -304,6 +337,9 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
             
     df_ctrl, _, _ = sim_dwelling.finalize()
 
+    # ---------------------------------------------------------
+    # 3. CLEANUP & EXPORT
+    # ---------------------------------------------------------
     df_ctrl = remove_first_day(df_ctrl, Start)
     df_base = remove_first_day(df_base, Start)
     
