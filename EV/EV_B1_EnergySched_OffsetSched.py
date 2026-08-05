@@ -26,12 +26,13 @@ import traceback
 # USER SETTINGS & EV CONFIGURATION
 #########################################
 
-filename = 'EV_Test_10'
+filename = 'EV_Test_11'
 Input_folder = "EV Input Files"
 
 # EV Control Settings
 CONTROL_MODE = 'max_p' # Choose 'load_fraction', 'p_setpoint', or 'max_p'
 DEFAULT_CHARGER_POWER_KW = 5.6 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
+DEFAULT_CAPACITY_KWH = 60.0 # Fallback capacity if missing from HPXML
 
 # Duty Cycle Multipliers (1.0 = 100% capacity)
 LOAD_UP_PCT = 1.0   # Force charge at max capacity
@@ -163,21 +164,17 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_kw, ev_name)
         
     elif control_mode == 'p_setpoint':
         # Forces the power draw no matter what
-        ctrl_signal[ev_name]['P Setpoint'] = -abs(fraction * charger_kw)
+        ctrl_signal[ev_name]['P Setpoint'] = abs(fraction * charger_kw)
         
     elif control_mode == 'max_p':
         charge_limit = abs(fraction * charger_kw)
         
         if state == 'Load_Up':
-            # Force charging to soak up energy. A cap won't trigger a charge event.
-            ctrl_signal[ev_name]['P Setpoint'] = -charge_limit
+            # Force charging by setting a specific setpoint
+            ctrl_signal[ev_name]['P Setpoint'] = charge_limit
         elif state == 'Shed':
-            # Cap the charging speed.
-            # Because charging is negative, the "maximum" charging speed is actually P Min.
-            ctrl_signal[ev_name]['P Min'] = -charge_limit
-            
-            # We also pass Max P (which caps V2G discharge) to cover all OCHRE parser versions
-            ctrl_signal[ev_name]['Max P'] = charge_limit
+            # Cap the maximum charging speed (P Max bounds the load)
+            ctrl_signal[ev_name]['P Max'] = charge_limit
             
     return ctrl_signal
 
@@ -241,6 +238,41 @@ def get_ev_charger_power(hpxml_path, default_kw=5.6):
     return default_kw
 
 #########################################
+# CAPACITY PARSER HELPER
+#########################################
+
+def get_ev_capacity_or_range(hpxml_path, default_capacity_kwh=60.0):
+    """
+    Parses the home's HPXML file to determine the EV's usable or nominal battery capacity.
+    Returns capacity in kWh.
+    """
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        
+        # Remove namespaces for easier tag matching
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+                
+        # Search for Battery element under ElectricVehicle/Vehicle
+        for battery in root.findall('.//Battery'):
+            # Prefer UsableCapacity, fallback to NominalCapacity
+            usable = battery.find('UsableCapacity/Value')
+            if usable is not None and usable.text:
+                return float(usable.text)
+                
+            nominal = battery.find('NominalCapacity/Value')
+            if nominal is not None and nominal.text:
+                return float(nominal.text)
+                
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV capacity from {hpxml_path}. Using default {default_capacity_kwh} kWh. Error: {e}")
+        
+    return default_capacity_kwh
+
+
+#########################################
 # SIMULATION FUNCTION
 #########################################
 
@@ -253,49 +285,49 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     # Dynamically determine charger wattage for this specific home
     home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
 
-    # Force any EV found to be modeled as a dynamic, controllable battery 
-    # and start at a low SOC so it has room to charge on Day 2.
-    ev_config = {
-        "equipment_type": "EV",
-        "initial_soc": 0.2, 
-        "charger_capacity": home_charger_kw
-    }
+    # Dynamically determine battery capacity for this vehicle
+    home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
 
     # ---------------------------------------------------------
     # 1. DISCOVERY RUN
     # ---------------------------------------------------------
-    discovery_args = {
-        "start_time": Start,
-        "time_res": dt.timedelta(minutes=t_res),
-        "duration": dt.timedelta(hours=1), 
-        "hpxml_file": hpxml_file,
-        "hpxml_schedule_file": filtered_sched_file,
-        "weather_file": weather_file_path,
-        "verbosity": 0
-    }
+    # discovery_args = {
+    #     "start_time": Start,
+    #     "time_res": dt.timedelta(minutes=t_res),
+    #     "duration": dt.timedelta(hours=1), 
+    #     "hpxml_file": hpxml_file,
+    #     "hpxml_schedule_file": filtered_sched_file,
+    #     "weather_file": weather_file_path,
+    #     "verbosity": 0
+    # }
     
-    ev_names = []
-    try:
-        disc_dwelling = Dwelling(name="Discovery", **discovery_args)
-        ev_names = [eq for eq in disc_dwelling.equipment.keys() if 'ev' in eq.lower() or 'vehicle' in eq.lower()]
-    except Exception as e:
-        print(f"\n[FATAL ERROR] OCHRE cannot load {os.path.basename(home_path)} natively.")
-        print("Here is the internal OCHRE error:")
-        print(traceback.format_exc())
-        print("Skipping this home...\n")
-        # Return empty dataframes to safely skip this home without breaking the aggregator
-        empty_df = pd.DataFrame()
-        return empty_df, empty_df
+    # ev_names = []
+    # try:
+    #     disc_dwelling = Dwelling(name="Discovery", **discovery_args)
+    #     ev_names = [eq for eq in disc_dwelling.equipment.keys() if 'ev' in eq.lower() or 'vehicle' in eq.lower()]
+    # except Exception as e:
+    #     print(f"\n[FATAL ERROR] OCHRE cannot load {os.path.basename(home_path)} natively.")
+    #     print("Here is the internal OCHRE error:")
+    #     print(traceback.format_exc())
+    #     print("Skipping this home...\n")
+    #     # Return empty dataframes to safely skip this home without breaking the aggregator
+    #     empty_df = pd.DataFrame()
+    #     return empty_df, empty_df
 
     # Now we only populate equipment_kwargs with the EXACT name(s) found.
     # If the home has no EV, this dict remains safely empty.
-    equip_kwargs = {}
-    for ev_n in ev_names:
-        equip_kwargs[ev_n] = copy.deepcopy(ev_config)
+    # equip_kwargs = { "EV" }
 
     # ---------------------------------------------------------
     # 2. MASTER RUNS
     # ---------------------------------------------------------
+    ev_names = ["EV"]
+
+    if home_charger_kw > 2:
+        charger_level = "Level 2"
+    else:
+        charger_level = "Level 1"
+    
     dwelling_args_local = {
         "start_time": Start,
         "time_res": dt.timedelta(minutes=t_res),
@@ -304,7 +336,13 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
-        "equipment_kwargs": equip_kwargs
+        "Equipment": {
+            "EV": {
+                "vehicle_type": "BEV",
+                "charging_level": charger_level,
+                "capacity": home_ev_capacity
+            }
+        }
     }
 
     # Baseline Run
