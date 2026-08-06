@@ -38,8 +38,15 @@ output_file_name4 = input_file_name2 + output_append_totpower + ".csv"
 output_file_3 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name3)
 output_file_4 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name4)
 
+output_append_SOC = "_SOC"
+output_file_name5 = input_file_name1 + output_append_SOC + ".csv"
+output_file_name6 = input_file_name2 + output_append_SOC + ".csv"
+output_file_5 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name5)
+output_file_6 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name6)
+
 photo_file_1 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_EV_power_plot.png")
 photo_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_Total_power_plot.png")
+photo_file_3 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_SOC_plot.png")
 
 
 #Saves the average of each column as a new row
@@ -114,6 +121,10 @@ plot_data(output_file_1, output_file_2, 'Average Power Consumption per EV System
 save_avg(output_file_3)
 save_avg(output_file_4)
 plot_data(output_file_3, output_file_4, 'Average Total Power Consumption per Household', photo_file_2, "ax2")
+
+save_avg(output_file_5)
+save_avg(output_file_6)
+plot_data(output_file_5, output_file_6, 'Average State of Charge (SOC) per Vehicle', photo_file_3, "ax3")
 
 #Show plot at the end so it doesn't overwrite the previous plot
 plt.show()

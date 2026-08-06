@@ -50,6 +50,12 @@ output_file_name4 = input_file_name2 + output_append_totpower + ".csv"
 output_file_3 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name3)
 output_file_4 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name4)
 
+output_append_SOC = "_SOC"
+output_file_name5 = input_file_name1 + output_append_SOC + ".csv"
+output_file_name6 = input_file_name2 + output_append_SOC + ".csv"
+output_file_5 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name5)
+output_file_6 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name6)
+
 
 ############################################################################
 #                             Create Folder                                #
@@ -90,7 +96,8 @@ def process_data(input_file, output_file, wanted_col):
     cols = ['Time',
         "Total Electric Power (kW)",
         "Total Electric Energy (kWh)",
-        "EV Electric Power (kW)"
+        "EV Electric Power (kW)",
+        "EV SOC (-)"
         ]
 
     #identify unwanted columns to drop
@@ -110,3 +117,5 @@ process_data(input_file_1, output_file_1, 'EV Electric Power (kW)')
 process_data(input_file_2, output_file_2, 'EV Electric Power (kW)')
 process_data(input_file_1, output_file_3, 'Total Electric Power (kW)')
 process_data(input_file_2, output_file_4, 'Total Electric Power (kW)')
+process_data(input_file_1, output_file_5, 'EV SOC (-)')
+process_data(input_file_2, output_file_6, 'EV SOC (-)')
