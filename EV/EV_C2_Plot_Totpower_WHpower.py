@@ -2,7 +2,7 @@
 #Author: Thomas Metzler
 #6/22/2026
 
-#Creates plots for the average water heater and total household power consumption, comparing baseline and controlled
+#Creates plots for the average EV and total household power consumption, comparing baseline and controlled
 #Works for HPWH 
 """
 
@@ -18,7 +18,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir) 
 working_dir = os.path.dirname(fl_dir)  
 
-input_file_root = "EV_Test_11"
+input_file_root = "EV_Test_32"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
@@ -94,8 +94,8 @@ def plot_data(baseline_file, controlled_file, title, photo_file, ax):
     df_con.columns = ['Time', 'controlled']
 
     # convert time column to a usable datetime fomat
-    df_base['Time'] = pd.to_datetime(df_base['Time'], errors='coerce').dt.strftime('%H:%M')
-    df_con['Time'] = pd.to_datetime(df_con['Time'], errors='coerce').dt.strftime('%H:%M')
+    df_base['Time'] = pd.to_datetime(df_base['Time'], format='%m/%d/%y:%H:%M', errors='coerce')
+    df_con['Time'] = pd.to_datetime(df_con['Time'], format='%m/%d/%y:%H:%M', errors='coerce')
 
     #plot
     fig, ax = plt.subplots(figsize=(8, 5))

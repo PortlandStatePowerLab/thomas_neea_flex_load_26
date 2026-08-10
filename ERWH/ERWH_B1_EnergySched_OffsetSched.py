@@ -59,7 +59,7 @@ Start = dt.datetime(2018, 1, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
-# HPWH control parameters (°F)
+# HPWH control parameters (°F) 
 Tcontrol_SHEDF = 126
 Tcontrol_deadbandF = 10
 Tcontrol_LOADF = 135

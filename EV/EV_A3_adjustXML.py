@@ -44,13 +44,13 @@ EV_CONVERSION_CONFIG = {
     # Details for the Service Feeders and Branch Circuits for EV chargers
     "ChargerDetails": {
         "1": {
-            "ChargingPower": "1600.0",
+            "ChargingPower": "7200.0",
             "Voltage": "120",
-            "MaxCurrentRating": "20.0",
+            "MaxCurrentRating": "60.0",
             "OccupiedSpaces": "1.0",
         },
         "2": {
-            "ChargingPower": "5690.0",
+            "ChargingPower": "11500.0",
             "Voltage": "240",
             "MaxCurrentRating": "50.0",
             "OccupiedSpaces": "2.0",

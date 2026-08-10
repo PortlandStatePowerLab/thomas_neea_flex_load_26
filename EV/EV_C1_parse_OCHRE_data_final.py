@@ -17,7 +17,7 @@ import os
 
 # Converts the datetime information in the HEMS data to usable datetimes
 def convert_custom_datetime(series):
-    return series.apply(lambda x: datetime.strptime(x, "%d/%m/%Y %H:%M"))
+    return series.apply(lambda x: datetime.strptime(x, "%D/%m/%Y %H:%M"))
 
 
 ############################################################################
@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)  
 working_dir = os.path.dirname(fl_dir)  
 
-input_file_root = "EV_Test_11"
+input_file_root = "EV_Test_32"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
@@ -91,7 +91,7 @@ def process_data(input_file, output_file, wanted_col):
     #df['time'] = convert_custom_datetime(df['Time'])
 
     # Create column that contains hour and minute data
-    df['hr_min'] = df['time'].dt.strftime('%H:%M')
+    df['hr_min'] = df['time'].dt.strftime('%D:%H:%M')
 
     cols = ['Time',
         "Total Electric Power (kW)",

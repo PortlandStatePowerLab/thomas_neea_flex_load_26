@@ -21,22 +21,28 @@ from pathlib import Path
 import ochre
 import copy
 import traceback
+import re
+import random
+import numpy as np
 
 #########################################
 # USER SETTINGS & EV CONFIGURATION
 #########################################
 
-filename = 'EV_Test_11'
+filename = 'EV_Test_32'
 Input_folder = "EV Input Files"
 
 # EV Control Settings
 CONTROL_MODE = 'max_p' # Choose 'load_fraction', 'p_setpoint', or 'max_p'
-DEFAULT_CHARGER_POWER_KW = 5.6 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
+DEFAULT_CHARGER_POWER_KW = 11.5 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
 DEFAULT_CAPACITY_KWH = 60.0 # Fallback capacity if missing from HPXML
 
 # Duty Cycle Multipliers (1.0 = 100% capacity)
 LOAD_UP_PCT = 1.0   # Force charge at max capacity
 SHED_PCT = 0.25     # Shed capacity (e.g., charge at only 25% max power)
+
+level_1kw = 7.2
+level_2kw = 11.5
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -66,14 +72,14 @@ count = 0
 
 # Schedule variant (Added V2G time block)
 my_schedule1 = {
-    'M_LU_time': '06:30',
-    'M_LU_duration': 1,
-    'M_S_time': '07:30',
-    'M_S_duration': 4,
-    'E_ALU_time': '13:00',
-    'E_ALU_duration': 1,
-    'E_S_time': '14:00',
-    'E_S_duration': 4,
+    'M_LU_time': '07:00',
+    'M_LU_duration': 0,
+    'M_S_time': '08:00',
+    'M_S_duration': 0,
+    'E_ALU_time': '16:00',
+    'E_ALU_duration': 0,
+    'E_S_time': '18:00',
+    'E_S_duration': 6,
 }
 
 def shift_time(time_str, minutes):
@@ -87,7 +93,7 @@ def shift_time(time_str, minutes):
 my_schedule = []
 
 #minutes you will offset schedules
-timestep = 30
+timestep = 0
 
 #number of bins
 bins = 1
@@ -147,7 +153,7 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_kw, ev_name)
             break 
             
     if state == 'Normal':
-        return {} 
+        fraction = 1.0
 
     # Map state to percentage
     if state == 'Load_Up':
@@ -171,10 +177,12 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_kw, ev_name)
         
         if state == 'Load_Up':
             # Force charging by setting a specific setpoint
-            ctrl_signal[ev_name]['P Setpoint'] = charge_limit
+            ctrl_signal[ev_name]['Max Power'] = charger_kw
         elif state == 'Shed':
             # Cap the maximum charging speed (P Max bounds the load)
-            ctrl_signal[ev_name]['P Max'] = charge_limit
+            ctrl_signal[ev_name]['Max Power'] = charge_limit
+        elif state == 'Normal':
+            ctrl_signal[ev_name]['Max Power'] = charger_kw
             
     return ctrl_signal
 
@@ -210,10 +218,10 @@ def filter_schedules(home_path):
 # CHARGER PARSER HELPER
 #########################################
 
-def get_ev_charger_power(hpxml_path, default_kw=5.6):
+def get_ev_charger_power(hpxml_path, default_kw=20):
     """
     Parses the home's HPXML file to determine if the EV uses a Level 1 or Level 2 charger.
-    Returns 1600 for Level 1, 5600 for Level 2.
+    Returns level_1kw (7.2) for Level 1, level_2kw (11.5) for Level 2.
     """
     try:
         tree = ET.parse(hpxml_path)
@@ -224,14 +232,12 @@ def get_ev_charger_power(hpxml_path, default_kw=5.6):
             if '}' in elem.tag:
                 elem.tag = elem.tag.split('}', 1)[1]
                 
-        for ev in root.findall('.//ElectricVehicle'):
-            level_elem = ev.find('ChargerLevel')
-            if level_elem is not None and level_elem.text:
-                text_val = level_elem.text.strip().lower()
-                if '1' in text_val:
-                    return 1.6
-                elif '2' in text_val:
-                    return 5.6
+        for charger in root.findall('.//ElectricVehicleCharger'):
+            charge_elem = charger.find('ChargingPower')
+            
+            if charge_elem is not None and charge_elem.text:
+                return float(charge_elem.text) / 1000
+                
     except Exception as e:
         print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_kw}. Error: {e}")
     
@@ -288,6 +294,12 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     # Dynamically determine battery capacity for this vehicle
     home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
 
+    # Get the folder name (e.g., 'bldg0011875-up00')
+    home_name = os.path.basename(home_path)
+    
+    # Remove all non-digit characters (leaves '001187500') and convert to integer
+    home_seed = int(re.sub(r'\D', '', home_name))
+
     # ---------------------------------------------------------
     # 1. DISCOVERY RUN
     # ---------------------------------------------------------
@@ -323,10 +335,11 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     # ---------------------------------------------------------
     ev_names = ["EV"]
 
-    if home_charger_kw > 2:
-        charger_level = "Level 2"
+    if home_charger_kw > 8:
+        home_charger = "Level 2"
     else:
-        charger_level = "Level 1"
+        home_charger = "Level 1"
+
     
     dwelling_args_local = {
         "start_time": Start,
@@ -336,23 +349,29 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
+        "seed": home_seed,
         "Equipment": {
             "EV": {
                 "vehicle_type": "BEV",
-                "charging_level": charger_level,
-                "capacity": home_ev_capacity
+                "capacity": home_ev_capacity,
+                "charging_level": home_charger,
+                "max_power": home_charger_kw
             }
         }
     }
 
     # Baseline Run
-    base_dwelling = Dwelling(name="EV Baseline", **copy.deepcopy(dwelling_args_local))
+    random.seed(home_seed)
+    np.random.seed(home_seed)
+    base_dwelling = Dwelling(name="EV_Simulation", **copy.deepcopy(dwelling_args_local))
     for t_base in base_dwelling.sim_times:
         base_dwelling.update() 
     df_base, _, _ = base_dwelling.finalize()
 
     # Controlled Run
-    sim_dwelling = Dwelling(name="EV Controlled", **copy.deepcopy(dwelling_args_local))
+    random.seed(20)
+    np.random.seed(20)
+    sim_dwelling = Dwelling(name="EV_Simulation", **copy.deepcopy(dwelling_args_local))
     for sim_time in sim_dwelling.sim_times:
         
         control_cmd = {}
@@ -434,7 +453,7 @@ def remove_first_day(df, start_date):
     df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
 
     # Remove first day
-    first_day_end = start_date + pd.Timedelta(days=1)
+    first_day_end = start_date + pd.Timedelta(days=0)
     return df[df['Time'] >= first_day_end].copy()
 
 #########################################
@@ -466,7 +485,7 @@ if __name__ == "__main__":
     print(f"homes: ", INPUT_DIR)
     print(f"Found {len(homes)} homes")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(simulate_home, home, WEATHER_FILE, my_schedule[sum(int(char) for char in home if char.isdigit()) % bins]) for home in homes]
         for f in concurrent.futures.as_completed(futures):
             try:
