@@ -36,8 +36,8 @@ metadata_df = pd.read_csv(METADATA_DIR, low_memory=False)
 EV_CONVERSION_CONFIG = {
     # Distribution of charger levels. Should sum to 1.0.
     "ChargerAdoptionRates": {
-        "Level1": 1,
-        "Level2": 0,
+        "Level1": 0.5,
+        "Level2": 0.5,
         "None": 0
     },
     

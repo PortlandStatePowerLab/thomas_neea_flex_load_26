@@ -29,8 +29,8 @@ import numpy as np
 # USER SETTINGS & EV CONFIGURATION
 #########################################
 
-filename = 'EV_Test_32'
-Input_folder = "EV Input Files"
+filename = 'EV_Test_34'
+Input_folder = "EV All Portland Input Files"
 
 # EV Control Settings
 CONTROL_MODE = 'max_p' # Choose 'load_fraction', 'p_setpoint', or 'max_p'
@@ -40,9 +40,6 @@ DEFAULT_CAPACITY_KWH = 60.0 # Fallback capacity if missing from HPXML
 # Duty Cycle Multipliers (1.0 = 100% capacity)
 LOAD_UP_PCT = 1.0   # Force charge at max capacity
 SHED_PCT = 0.25     # Shed capacity (e.g., charge at only 25% max power)
-
-level_1kw = 7.2
-level_2kw = 11.5
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -78,7 +75,7 @@ my_schedule1 = {
     'M_S_duration': 0,
     'E_ALU_time': '16:00',
     'E_ALU_duration': 0,
-    'E_S_time': '18:00',
+    'E_S_time': '15:00',
     'E_S_duration': 6,
 }
 
@@ -93,10 +90,10 @@ def shift_time(time_str, minutes):
 my_schedule = []
 
 #minutes you will offset schedules
-timestep = 0
+timestep = 15
 
 #number of bins
-bins = 1
+bins = 8
 
 # Generate schedules with offsets
 for i in range(bins):
@@ -453,7 +450,7 @@ def remove_first_day(df, start_date):
     df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
 
     # Remove first day
-    first_day_end = start_date + pd.Timedelta(days=0)
+    first_day_end = start_date + pd.Timedelta(days=1)
     return df[df['Time'] >= first_day_end].copy()
 
 #########################################
