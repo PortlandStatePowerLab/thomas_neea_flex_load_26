@@ -24,10 +24,10 @@ import ochre
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'Dryer_Test_10'
+filename = 'Dryer_Test_11'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
-Input_folder = "Dryer Input Files"
+Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -49,6 +49,9 @@ WEATHER_DIR = os.path.join(WORKING_DIR, "Weather")
 WEATHER_FILE = os.path.join(WEATHER_DIR, "USA_OR_Portland.Intl.AP.726980_TMY3.epw")
 XML_ADDRESS = "home.xml"
 CSV_ADDRESS = "in.schedules.csv"
+
+#Duty cycle for shed
+duty_cycle = 0.5
 
 
 # Simulation parameters
@@ -120,7 +123,7 @@ my_schedule = []
 timestep = 15
 
 #number of bins
-bins = 4
+bins = 1
 
 # Generate schedules with offsets
 for i in range(bins):
@@ -197,7 +200,7 @@ def determine_hvac_control(sim_time, sched_cfg, **kwargs):
 def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     """
     Creates a baseline schedule (unmodified dryer) and a controlled schedule 
-    (dryer load shifted out of shed periods).
+    (dryer load shifted out of shed periods based on a duty cycle).
     """
     orig_sched_file = os.path.join(home_path, CSV_ADDRESS)
     base_sched_file = os.path.join(home_path, 'baseline_schedules.csv')
@@ -252,10 +255,19 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
             shed_load = group.loc[day_mask, dryer_col]
             if shed_load.sum() > 0:
                 # Extract non-zero values to retain the actual machine profile
-                vals_to_shift = shed_load[shed_load > 0].values
+                active_mask = shed_load > 0
+                original_vals = shed_load[active_mask].values
                 
-                # Zero out the shed period in the new schedule
-                new_dryer.loc[group.index[day_mask]] = 0
+                # Calculate the kept portion (duty cycle) and the shifted portion (remainder)
+                kept_vals = original_vals * duty_cycle
+                vals_to_shift = original_vals * (1 - duty_cycle)
+                
+                # Apply the duty cycle to the shed period in the new schedule
+                new_dryer.loc[shed_load.index[active_mask]] = kept_vals
+                
+                # Ensure the inactive parts of the shed remain 0
+                inactive_mask = shed_load == 0
+                new_dryer.loc[shed_load.index[inactive_mask]] = 0
                 
                 # Find valid indices immediately after the shed ends
                 after_shed_mask = (group.index.time >= end_time)
@@ -263,7 +275,7 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
                 
                 if len(vals_to_shift) > 0 and len(available_indices) > 0:
                     n = min(len(vals_to_shift), len(available_indices))
-                    # Add the shifted profile back in
+                    # Add the shifted (remainder) profile back in
                     new_dryer.loc[available_indices[:n]] += vals_to_shift[:n]
                     
     df_sched[dryer_col] = new_dryer
