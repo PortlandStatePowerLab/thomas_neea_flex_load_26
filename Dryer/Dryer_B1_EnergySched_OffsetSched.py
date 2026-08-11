@@ -18,16 +18,17 @@ from ochre.utils.schedule import ALL_SCHEDULE_NAMES
 import concurrent.futures
 from pathlib import Path
 import ochre
+import numpy as np
 
 #########################################
 # USER SETTINGS
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'Dryer_Test_10'
+filename = 'Dryer_Test_12'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
-Input_folder = "Dryer Input Files"
+Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -49,6 +50,9 @@ WEATHER_DIR = os.path.join(WORKING_DIR, "Weather")
 WEATHER_FILE = os.path.join(WEATHER_DIR, "USA_OR_Portland.Intl.AP.726980_TMY3.epw")
 XML_ADDRESS = "home.xml"
 CSV_ADDRESS = "in.schedules.csv"
+
+#Duty cycle for shed
+duty_cycle = 0.5
 
 
 # Simulation parameters
@@ -120,7 +124,7 @@ my_schedule = []
 timestep = 15
 
 #number of bins
-bins = 4
+bins = 1
 
 # Generate schedules with offsets
 for i in range(bins):
@@ -196,8 +200,9 @@ def determine_hvac_control(sim_time, sched_cfg, **kwargs):
 
 def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     """
-    Creates a baseline schedule (unmodified dryer) and a controlled schedule 
-    (dryer load shifted out of shed periods).
+    Creates a baseline schedule and a controlled schedule.
+    Uses a load accumulator to stretch run times during shed periods,
+    conserving the total run time (area under the curve).
     """
     orig_sched_file = os.path.join(home_path, CSV_ADDRESS)
     base_sched_file = os.path.join(home_path, 'baseline_schedules.csv')
@@ -207,7 +212,6 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     
     # Filter valid columns
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-
     filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
     df_sched = df_sched[filtered_columns].copy()
     
@@ -226,9 +230,10 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     df_sched['Datetime'] = pd.date_range(start="2018-01-01 00:00:00", periods=len(df_sched), freq=f'{t_res_minutes}min')
     df_sched.set_index('Datetime', inplace=True)
     
-    new_dryer = df_sched[dryer_col].copy()
-
-    # Process each shed period separately
+    # 1. Build a boolean mask for ALL shed periods
+    in_shed = np.zeros(len(df_sched), dtype=bool)
+    time_series = df_sched.index.time
+    
     for prefix in ['M_S', 'E_S']:
         start_str = sched_cfg[f'{prefix}_time']
         duration_hrs = sched_cfg[f'{prefix}_duration']
@@ -237,36 +242,45 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
         start_time = pd.to_datetime(start_str).time()
         end_time = (pd.to_datetime(start_str) + pd.Timedelta(hours=duration_hrs)).time()
         
-        # Mask for the shed time
-        time_series = df_sched.index.time
+        # Handle midnight crossovers safely
         if start_time < end_time:
             mask = (time_series >= start_time) & (time_series < end_time)
-        else: # Handles midnight crossover
+        else: 
             mask = (time_series >= start_time) | (time_series < end_time)
             
-        # Shift load day by day
-        for date, group in df_sched.groupby(df_sched.index.date):
-            day_mask = mask[df_sched.index.date == date]
-            if not day_mask.any(): continue
+        in_shed = in_shed | mask
+
+    # 2. Accumulate and distribute load to conserve total schedule sum
+    orig_vals = df_sched[dryer_col].values
+    new_vals = np.zeros_like(orig_vals, dtype=float)
+    
+    # Find the maximum normal operating coefficient (usually 1.0)
+    max_cap = orig_vals.max() if orig_vals.max() > 0 else 1.0
+    work_queue = 0.0
+    
+    for i in range(len(orig_vals)):
+        # Add the current timestep's scheduled work to the queue
+        work_queue += orig_vals[i]
+        
+        # Clean up floating point precision remnants
+        if work_queue < 1e-6:
+            work_queue = 0.0
             
-            shed_load = group.loc[day_mask, dryer_col]
-            if shed_load.sum() > 0:
-                # Extract non-zero values to retain the actual machine profile
-                vals_to_shift = shed_load[shed_load > 0].values
+        if work_queue > 0:
+            # Throttle the max allowable rate if we are in a shed period
+            if in_shed[i]:
+                allowed_rate = max_cap * duty_cycle
+            else:
+                allowed_rate = max_cap
                 
-                # Zero out the shed period in the new schedule
-                new_dryer.loc[group.index[day_mask]] = 0
-                
-                # Find valid indices immediately after the shed ends
-                after_shed_mask = (group.index.time >= end_time)
-                available_indices = group.index[after_shed_mask]
-                
-                if len(vals_to_shift) > 0 and len(available_indices) > 0:
-                    n = min(len(vals_to_shift), len(available_indices))
-                    # Add the shifted profile back in
-                    new_dryer.loc[available_indices[:n]] += vals_to_shift[:n]
-                    
-    df_sched[dryer_col] = new_dryer
+            # Run the dryer up to the allowed rate, but no more than what's left in the queue
+            run_amt = min(work_queue, allowed_rate)
+            
+            new_vals[i] = run_amt
+            work_queue -= run_amt
+
+    # Assign new values back to the dataframe
+    df_sched[dryer_col] = new_vals
     df_sched.reset_index(drop=True, inplace=True)
     
     # Save controlled schedule
