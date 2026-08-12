@@ -21,12 +21,13 @@ import random
 import re
 import copy
 import numpy as np
+import math
 
 #########################################
 # USER SETTINGS
 #########################################
 
-filename = 'EV_test_LoadShape_1'
+filename = 'EV_test_LoadShape_7'
 Input_folder = "EV Input Files"
 
 # Original OCHRE defaults folder
@@ -70,7 +71,7 @@ ESTIMATED_SHED_KW = 4.0       # Est. power DROPPED when allowing a unit to SHED 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
 KP = 1.0                      # Proportional gain
-KI = 0.8                      # Integral gain
+KI = 0.5                      # Integral gain
 KD = 1.0                      # Derivative gain
                   
 
@@ -152,13 +153,40 @@ def is_ev_charging(sim_dw):
     Checks the dwelling's last timestep results to see if the EV was actively drawing power.
     Assumes charging if drawing more than 0.1 kW (100W).
     """
-    if not hasattr(sim_dw, 'current_results') or not sim_dw.current_results:
-        return False
-        
-    for key, val in sim_dw.current_results.items():
-        if ('ev' in key.lower() or 'vehicle' in key.lower()) and 'power' in key.lower():
-            if isinstance(val, (int, float)) and val > 0.1:
-                return True
+    # 1. Try checking the dwelling's top-level current_results
+    if hasattr(sim_dw, 'current_results') and sim_dw.current_results:
+        for key, val in sim_dw.current_results.items():
+            key_lower = key.lower()
+            if 'ev' in key_lower and 'power' in key_lower:
+                try:
+                    if float(val) > 0.1:
+                        return True
+                except (ValueError, TypeError):
+                    pass
+    
+    # 2. Try checking the nested equipment directly 
+    if hasattr(sim_dw, 'equipment') and isinstance(sim_dw.equipment, dict):
+        for eq_name, eq in sim_dw.equipment.items():
+            if 'ev' in eq_name.lower():
+                
+                # Check equipment's nested current_results
+                if hasattr(eq, 'current_results') and eq.current_results:
+                    for key, val in eq.current_results.items():
+                        if 'power' in key.lower():
+                            try:
+                                if float(val) > 0.1:
+                                    return True
+                            except (ValueError, TypeError):
+                                pass
+                
+                # Check for direct power attributes
+                if hasattr(eq, 'electric_kw'):
+                    try:
+                        if float(eq.electric_kw) > 0.1:
+                            return True
+                    except (ValueError, TypeError):
+                        pass
+
     return False
 
 #########################################
@@ -347,6 +375,13 @@ if __name__ == "__main__":
             
             # Discrete-time tracking transformations
             integral_error += error
+            
+            # --- ANTI-WINDUP CLAMPING ---
+            # Prevent the integral from building up a massive "memory" when error stays positive or negative for hours
+            MAX_INTEGRAL = 0.1
+            MIN_INTEGRAL = -2.0
+            integral_error = max(min(integral_error, MAX_INTEGRAL), MIN_INTEGRAL)
+            
             derivative_error = error - previous_error
             previous_error = error
             
@@ -361,7 +396,7 @@ if __name__ == "__main__":
                 normal_charging_homes = [h for h in fleet_data if h["override"] == "NORMAL" and is_ev_charging(h["sim"])]
                 random.shuffle(normal_charging_homes)
                 
-                units_to_shed = int(total_kw_to_drop / ESTIMATED_SHED_KW)
+                units_to_shed = math.ceil(total_kw_to_drop / ESTIMATED_SHED_KW)
                 shed_applied = min(units_to_shed, len(normal_charging_homes))
                 
                 for h in normal_charging_homes[:shed_applied]:
@@ -375,7 +410,7 @@ if __name__ == "__main__":
                 shed_homes = [h for h in fleet_data if h["override"] == "SHED"]
                 random.shuffle(shed_homes)
                 
-                units_to_restore_from_shed = int(total_kw_to_add / ESTIMATED_SHED_KW)
+                units_to_restore_from_shed = math.ceil(total_kw_to_add / ESTIMATED_SHED_KW)
                 restored_from_shed = min(units_to_restore_from_shed, len(shed_homes))
                 
                 for h in shed_homes[:restored_from_shed]:
@@ -427,6 +462,7 @@ if __name__ == "__main__":
         # --- NEW: Log Fleet States for this Timestep ---
         shed_count = sum(1 for h in fleet_data if h["override"] == "SHED")
         normal_count = sum(1 for h in fleet_data if h["override"] == "NORMAL")
+        normal_charging_count = sum(1 for h in fleet_data if h["override"] == "NORMAL" and is_ev_charging(h["sim"]))
         
         vpp_state_log.append({
             "Time": sim_time,
@@ -434,6 +470,7 @@ if __name__ == "__main__":
             "Actual Average Power (kW)": average_power_kw,
             "Aggregate Power (kW)": aggregate_power_kw,
             "Units in NORMAL": normal_count,
+            "Units in NORMAL (Charging)": normal_charging_count,
             "Units in SHED": shed_count
         })
 
