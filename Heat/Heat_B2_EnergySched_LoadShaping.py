@@ -19,8 +19,8 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Heat_Test_PID_1.0_0.8_1.0'
-Input_folder = "HVAC All Portland Input Files"
+filename = 'Heat_Test_6'
+Input_folder = "Heat Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -48,16 +48,16 @@ VPP_START_TIME = dt.time(12, 0)
 VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
-AVERAGE_SETPOINT_KW = 1.5     # Target average power PER HOME during VPP event
+AVERAGE_SETPOINT_KW = 3.5     # Target average power PER HOME during VPP event
 AVERAGE_DEADBAND_KW = 0.1     # Tolerance PER HOME to prevent constant toggling
-ESTIMATED_LOAD_KW = 3.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
-ESTIMATED_SHED_KW = 1.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
+ESTIMATED_LOAD_KW = 9.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
+ESTIMATED_SHED_KW = 2.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
-KP = 1.0                      # Proportional gain
-KI = 0.8                      # Integral gain
-KD = 1.0                      # Derivative gain
+KP = 0.7                      # Proportional gain
+KI = 0.3                      # Integral gain
+KD = 0.1                      # Derivative gain
 
 # HVAC control parameters (°F)
 Tcontrol_SHEDF = 64 
