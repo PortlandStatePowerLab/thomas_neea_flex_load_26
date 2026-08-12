@@ -325,8 +325,8 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     df_base, _, _ = base_dwelling.finalize()
 
     # Controlled Run
-    random.seed(20)
-    np.random.seed(20)
+    random.seed(home_seed)
+    np.random.seed(home_seed)
     sim_dwelling = Dwelling(name="EV_Simulation", **copy.deepcopy(dwelling_args_local))
     for sim_time in sim_dwelling.sim_times:
         
