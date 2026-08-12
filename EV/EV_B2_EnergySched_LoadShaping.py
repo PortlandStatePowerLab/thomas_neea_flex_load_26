@@ -1,6 +1,6 @@
 """
 Author: Thomas Metzler
-Created: 7/6/26
+Created: 8/12/26
 Adjusts load up and shed commands to keep power consumption at a constant level.
 """
 
@@ -14,13 +14,16 @@ import concurrent.futures
 from pathlib import Path
 import ochre
 import random
+import re
+import random
+import numpy as np
 
 #########################################
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_2'
-Input_folder = "Dryer All Portland Input Files"
+filename = 'EV_test_LoadShape_1'
+Input_folder = "EV Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -42,6 +45,15 @@ Start = dt.datetime(2018, 1, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
+# EV Control Settings
+CONTROL_MODE = 'max_p'
+DEFAULT_CHARGER_POWER_KW = 11.5 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
+DEFAULT_CAPACITY_KWH = 60.0 # Fallback capacity if missing from HPXML
+
+# Duty Cycle Multipliers (1.0 = 100% capacity)
+LOAD_UP_PCT = 1.0   # charge at full capacity
+SHED_PCT = 0.25     # Shed capacity (e.g., charge at only 25% max power)
+
 # --- GLOBAL VPP EVENT SETTINGS ---
 # Define the time window for active load shaping
 VPP_START_TIME = dt.time(12, 0)
@@ -51,36 +63,15 @@ VPP_END_TIME = dt.time(23, 0)
 AVERAGE_SETPOINT_KW = 2.0     # Target average power PER HOME during VPP event
 AVERAGE_DEADBAND_KW = 0.1     # Tolerance PER HOME to prevent constant toggling
 ESTIMATED_LOAD_KW = 0         # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
-ESTIMATED_SHED_KW = 1.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
+ESTIMATED_SHED_KW = 4.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
 KP = 1.0                      # Proportional gain
 KI = 0.8                      # Integral gain
 KD = 1.0                      # Derivative gain
-
-# # HVAC control parameters (°F)
-# Tcontrol_SHEDF = 64 
-# Tcontrol_LOADF = 72          
-# TbaselineF = 68              
-# TdeadbandF = 2
-# Tinit = 68                   
+                  
 count = 0
-
-#########################################
-# TEMPERATURE CONVERSIONS F to C
-#########################################
-
-# def f_to_c(temp_f): 
-#     return (temp_f - 32) * 5/9
-
-# def f_to_c_DB(temp_f):
-#     return 5/9 * temp_f
-
-# Tcontrol_SHEDC = f_to_c(Tcontrol_SHEDF)
-# Tcontrol_LOADC = f_to_c(Tcontrol_LOADF)
-# TbaselineC = f_to_c(TbaselineF)
-# TdeadbandC = f_to_c_DB(TdeadbandF)
 
 #########################################
 # HELPER FUNCTIONS
@@ -92,9 +83,17 @@ def filter_schedules(home_path):
 
     df_sched = pd.read_csv(orig_sched_file)
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
-    dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
     
+    # Catch any variation of EV / Vehicle schedules
+    filtered_columns = [
+        col for col in df_sched.columns 
+        if col in valid_schedule_names 
+        or 'ev' in col.lower() 
+        or 'vehicle' in col.lower()
+        or 'plug' in col.lower()
+    ]
+    
+    dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
     if dropped_columns:
         print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
 
@@ -126,8 +125,8 @@ def aggregate_results(homes, work_dir):
     all_ctrl, all_base = [], []
     for home in homes:
         results_dir = os.path.join(home, "Results")
-        ctrl_file = os.path.join(results_dir, "dryer_controlled.csv")
-        base_file = os.path.join(results_dir, "dryer_baseline.csv")
+        ctrl_file = os.path.join(results_dir, "home_controlled.csv")
+        base_file = os.path.join(results_dir, "home_baseline.csv")
         
         if os.path.exists(ctrl_file):
             df_ctrl = pd.read_csv(ctrl_file)
@@ -149,30 +148,63 @@ def aggregate_results(homes, work_dir):
     print(f"Aggregated CSVs written!")
 
 #########################################
-# HPWH / HVAC CONTROL & INITIALIZATION
+# EV CONTROL & INITIALIZATION
 #########################################
 
-def determine_dryer_control(global_mode="NORMAL"):
+def determine_EV_control(global_mode="NORMAL", control_mode, charger_kw, ev_name):
     """
     Highly simplified controller. 
     It purely reacts to the assigned global VPP mode.
     """
-    ctrl_signal = {
-        'Clothes Dryer': {
-            'Load Fraction': 1,
-        }
-    }
+    # Format the control signal using the dynamically found ev_name
+    ctrl_signal = {ev_name: {}}
 
-    if global_mode == "SHED":
-        ctrl_signal['Clothes Dryer'].update({'Load Fraction': 0})
-    elif global_mode == "LOAD":
-        ctrl_signal['Clothes Dryer'].update({'Load Fraction': 1})
+    if state == 'Normal':
+        fraction = 1.0
+
+    # Map state to percentage
+    if state == 'Load_Up':
+        fraction = LOAD_UP_PCT
+    elif state == 'Shed':
+        fraction = SHED_PCT
+        
+    if control_mode == 'max_p':
+        charge_limit = abs(fraction * charger_kw)
+        
+        if state == 'Load_Up':
+            # Force charging by setting a specific setpoint
+            ctrl_signal[ev_name]['Max Power'] = charger_kw
+        elif state == 'Shed':
+            # Cap the maximum charging speed (P Max bounds the load)
+            ctrl_signal[ev_name]['Max Power'] = charge_limit
+        elif state == 'Normal':
+            ctrl_signal[ev_name]['Max Power'] = charger_kw
 
     return ctrl_signal
 
 def initialize_home(home_path, weather_file_path):
     filtered_sched_file = filter_schedules(home_path)
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
+
+    # Dynamically determine charger wattage for this specific home
+    home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
+    
+    # Dynamically determine battery capacity for this vehicle
+    home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
+    
+    # Get the folder name (e.g., 'bldg0011875-up00')
+    home_name = os.path.basename(home_path)
+        
+    # Remove all non-digit characters (leaves '001187500') and convert to integer
+    home_seed = int(re.sub(r'\D', '', home_name))
+    
+    ev_names = ["EV"]
+
+    if home_charger_kw > 8:
+        home_charger = "Level 2"
+    else:
+        home_charger = "Level 1"
+    
     
     dwelling_args_local = {
         "start_time": Start,
@@ -182,6 +214,15 @@ def initialize_home(home_path, weather_file_path):
         "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
+        "seed": home_seed,
+        "Equipment": {
+            "EV": {
+                "vehicle_type": "BEV",
+                "capacity": home_ev_capacity,
+                "charging_level": home_charger,
+                "max_power": home_charger_kw
+            }
+        }
     }
 
     base_dwelling = Dwelling(name=f"Base_{os.path.basename(home_path)}", **dwelling_args_local)
@@ -197,6 +238,68 @@ def init_fleet_worker(home):
         "path": home,
         "override": "NORMAL"  # VPP command tracking state
     }
+
+#########################################
+# CHARGER PARSER HELPER
+#########################################
+
+def get_ev_charger_power(hpxml_path, default_kw=20):
+    """
+    Parses the home's HPXML file to determine the power the EV charger draws
+    """
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        
+        # Remove namespaces for easier tag matching
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+                
+        for charger in root.findall('.//ElectricVehicleCharger'):
+            charge_elem = charger.find('ChargingPower')
+            
+            if charge_elem is not None and charge_elem.text:
+                return float(charge_elem.text) / 1000
+                
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_kw}. Error: {e}")
+    
+    return default_kw
+
+#########################################
+# CAPACITY PARSER HELPER
+#########################################
+
+def get_ev_capacity_or_range(hpxml_path, default_capacity_kwh=60.0):
+    """
+    Parses the home's HPXML file to determine the EV's usable or nominal battery capacity.
+    Returns capacity in kWh.
+    """
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        
+        # Remove namespaces for easier tag matching
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+                
+        # Search for Battery element under ElectricVehicle/Vehicle
+        for battery in root.findall('.//Battery'):
+            # Prefer UsableCapacity, fallback to NominalCapacity
+            usable = battery.find('UsableCapacity/Value')
+            if usable is not None and usable.text:
+                return float(usable.text)
+                
+            nominal = battery.find('NominalCapacity/Value')
+            if nominal is not None and nominal.text:
+                return float(nominal.text)
+                
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV capacity from {hpxml_path}. Using default {default_capacity_kwh} kWh. Error: {e}")
+        
+    return default_capacity_kwh
 
 #########################################
 # MAIN EXECUTION
@@ -349,7 +452,7 @@ if __name__ == "__main__":
             base_dw.update(control_signal=base_ctrl)
             
            # 2. Controlled Update (driven purely by the VPP state now)
-            control_cmd = determine_dryer_control(global_mode=home_data["override"])
+            control_cmd = determine_EV_control(global_mode=home_data["override"], control_mode=CONTROL_MODE, charger_kw=home_charger_kw, ev_name=primary_ev)
             
             # The update() method usually returns a dictionary of the current timestep's metrics
             metrics = sim_dw.update(control_signal=control_cmd)
@@ -390,7 +493,7 @@ if __name__ == "__main__":
     
     CTRL_COLS = [
         "Time", "Total Electric Power (kW)", "Total Electric Energy (kWh)",
-        "Clothes Dryer Electric Power (kW)"
+        "EV Electric Power (kW)", "EV SOC (-)"
     ]
     
     for home_data in fleet_data:
@@ -407,8 +510,8 @@ if __name__ == "__main__":
         df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
         df_base = df_base[[c for c in CTRL_COLS if c in df_base.columns]]
         
-        df_ctrl.to_csv(os.path.join(results_dir, 'dryer_controlled.csv'), index=False)
-        df_base.to_csv(os.path.join(results_dir, 'dryer_baseline.csv'), index=False)
+        df_ctrl.to_csv(os.path.join(results_dir, 'home_controlled.csv'), index=False)
+        df_base.to_csv(os.path.join(results_dir, 'home_baseline.csv'), index=False)
 
     # --- 4. Aggregate ---
     aggregate_results(homes, WORKING_DIR)

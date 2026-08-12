@@ -33,7 +33,7 @@ filename = 'EV_Test_34'
 Input_folder = "EV All Portland Input Files"
 
 # EV Control Settings
-CONTROL_MODE = 'max_p' # Choose 'load_fraction', 'p_setpoint', or 'max_p'
+CONTROL_MODE = 'max_p'
 DEFAULT_CHARGER_POWER_KW = 11.5 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
 DEFAULT_CAPACITY_KWH = 60.0 # Fallback capacity if missing from HPXML
 
@@ -67,7 +67,7 @@ Duration = 2  # days
 t_res = 15  # minutes
 count = 0
 
-# Schedule variant (Added V2G time block)
+# Schedule variant
 my_schedule1 = {
     'M_LU_time': '07:00',
     'M_LU_duration': 0,
@@ -160,16 +160,9 @@ def determine_EV_control(sim_time, sched_cfg, control_mode, charger_kw, ev_name)
 
     # Format the control signal using the dynamically found ev_name
     ctrl_signal = {ev_name: {}}
-    
-    # FIX 2: Send raw kW. OCHRE EVs (unlike HVAC) expect kW limits.
-    if control_mode == 'load_fraction':
-        ctrl_signal[ev_name]['Load Fraction'] = fraction
+
         
-    elif control_mode == 'p_setpoint':
-        # Forces the power draw no matter what
-        ctrl_signal[ev_name]['P Setpoint'] = abs(fraction * charger_kw)
-        
-    elif control_mode == 'max_p':
+    if control_mode == 'max_p':
         charge_limit = abs(fraction * charger_kw)
         
         if state == 'Load_Up':
@@ -217,8 +210,7 @@ def filter_schedules(home_path):
 
 def get_ev_charger_power(hpxml_path, default_kw=20):
     """
-    Parses the home's HPXML file to determine if the EV uses a Level 1 or Level 2 charger.
-    Returns level_1kw (7.2) for Level 1, level_2kw (11.5) for Level 2.
+    Parses the home's HPXML file to determine the power the EV charger draws
     """
     try:
         tree = ET.parse(hpxml_path)
@@ -297,39 +289,6 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     # Remove all non-digit characters (leaves '001187500') and convert to integer
     home_seed = int(re.sub(r'\D', '', home_name))
 
-    # ---------------------------------------------------------
-    # 1. DISCOVERY RUN
-    # ---------------------------------------------------------
-    # discovery_args = {
-    #     "start_time": Start,
-    #     "time_res": dt.timedelta(minutes=t_res),
-    #     "duration": dt.timedelta(hours=1), 
-    #     "hpxml_file": hpxml_file,
-    #     "hpxml_schedule_file": filtered_sched_file,
-    #     "weather_file": weather_file_path,
-    #     "verbosity": 0
-    # }
-    
-    # ev_names = []
-    # try:
-    #     disc_dwelling = Dwelling(name="Discovery", **discovery_args)
-    #     ev_names = [eq for eq in disc_dwelling.equipment.keys() if 'ev' in eq.lower() or 'vehicle' in eq.lower()]
-    # except Exception as e:
-    #     print(f"\n[FATAL ERROR] OCHRE cannot load {os.path.basename(home_path)} natively.")
-    #     print("Here is the internal OCHRE error:")
-    #     print(traceback.format_exc())
-    #     print("Skipping this home...\n")
-    #     # Return empty dataframes to safely skip this home without breaking the aggregator
-    #     empty_df = pd.DataFrame()
-    #     return empty_df, empty_df
-
-    # Now we only populate equipment_kwargs with the EXACT name(s) found.
-    # If the home has no EV, this dict remains safely empty.
-    # equip_kwargs = { "EV" }
-
-    # ---------------------------------------------------------
-    # 2. MASTER RUNS
-    # ---------------------------------------------------------
     ev_names = ["EV"]
 
     if home_charger_kw > 8:
@@ -411,8 +370,8 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
     df_base = df_base[[c for c in BASE_COLS if c in df_base.columns]]
         
-    df_ctrl.to_csv(os.path.join(results_dir, 'ev_controlled.csv'), index=False)
-    df_base.to_csv(os.path.join(results_dir, 'ev_baseline.csv'), index=False)
+    df_ctrl.to_csv(os.path.join(results_dir, 'home_controlled.csv'), index=False)
+    df_base.to_csv(os.path.join(results_dir, 'home_baseline.csv'), index=False)
 
     return df_ctrl, df_base
 
@@ -497,8 +456,8 @@ def aggregate_results(homes, work_dir):
 
     for home in homes:
         results_dir = os.path.join(home, "Results")
-        ctrl_file = os.path.join(results_dir, "ev_controlled.csv")
-        base_file = os.path.join(results_dir, "ev_baseline.csv")
+        ctrl_file = os.path.join(results_dir, "home_controlled.csv")
+        base_file = os.path.join(results_dir, "home_baseline.csv")
         
         if os.path.exists(ctrl_file):
             df_ctrl = pd.read_csv(ctrl_file)
