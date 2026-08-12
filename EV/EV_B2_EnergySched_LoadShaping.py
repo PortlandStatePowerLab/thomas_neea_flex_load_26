@@ -1,8 +1,10 @@
 """
 Author: Thomas Metzler
 Created: 8/12/26
+
 Adjusts load up and shed commands to keep EV fleet power consumption at a constant level.
 Modified to account for EV constraints (managing load via SHED and NORMAL restoration only).
+Includes charging-aware shedding and identical randomization seeding to ensure 1:1 EV schedules.
 """
 
 import os
@@ -17,6 +19,7 @@ from pathlib import Path
 import ochre
 import random
 import re
+import copy
 import numpy as np
 
 #########################################
@@ -257,8 +260,15 @@ def initialize_home(home_path, weather_file_path):
         }
     }
 
-    base_dwelling = Dwelling(name=f"Base_{home_name}", **dwelling_args_local)
-    sim_dwelling = Dwelling(name=f"Ctrl_{home_name}", **dwelling_args_local)
+    # Baseline Run Identical Initialization
+    random.seed(home_seed)
+    np.random.seed(home_seed)
+    base_dwelling = Dwelling(name="EV_Simulation", **copy.deepcopy(dwelling_args_local))
+    
+    # Controlled Run Identical Initialization
+    random.seed(home_seed)
+    np.random.seed(home_seed)
+    sim_dwelling = Dwelling(name="EV_Simulation", **copy.deepcopy(dwelling_args_local))
     
     return base_dwelling, sim_dwelling, home_charger_kw, primary_ev
 
