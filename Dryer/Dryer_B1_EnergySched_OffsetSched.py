@@ -25,7 +25,7 @@ import numpy as np
 #########################################
 
 #Gallons, MLU, MLU duration, Shed duration, ELU, ELU duration, Shed duration, Offset sheds 
-filename = 'Dryer_Test_12'
+filename = 'Dryer_Test_15'
 
 #"HPWH 50 Input Files", "HPWH 66 Input Files/bldg", "HPWH 80 Input Files", "HPWH All Input Files/bldg"
 Input_folder = "Dryer Input Files 2"
@@ -102,8 +102,8 @@ count = 0
 my_schedule1 = {
     'M_LU_time': '07:00',
     'M_LU_duration': 0,
-    'M_S_time': '08:00',
-    'M_S_duration': 5,
+    'M_S_time': '08:30',
+    'M_S_duration': 6,
     'E_ALU_time': '15:00',
     'E_ALU_duration': 0,
     'E_S_time': '17:00',
@@ -250,7 +250,7 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
             
         in_shed = in_shed | mask
 
-    # 2. Accumulate and distribute load to conserve total schedule sum
+# 2. Accumulate and distribute load to conserve total schedule sum
     orig_vals = df_sched[dryer_col].values
     new_vals = np.zeros_like(orig_vals, dtype=float)
     
@@ -267,15 +267,20 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
             work_queue = 0.0
             
         if work_queue > 0:
-            # Throttle the max allowable rate if we are in a shed period
-            if in_shed[i]:
-                allowed_rate = max_cap * duty_cycle
+            # TRICK OCHRE: Detect any boundary (entering or exiting a shed)
+            # Force a 0 for exactly one timestep to split the event
+            if i > 0 and in_shed[i] != in_shed[i-1]:
+                run_amt = 0.0
             else:
-                allowed_rate = max_cap
+                # Throttle the max allowable rate if we are in a shed period
+                if in_shed[i]:
+                    allowed_rate = max_cap * duty_cycle
+                else:
+                    allowed_rate = max_cap
+                    
+                # Run the dryer up to the allowed rate, but no more than what's left in the queue
+                run_amt = min(work_queue, allowed_rate)
                 
-            # Run the dryer up to the allowed rate, but no more than what's left in the queue
-            run_amt = min(work_queue, allowed_rate)
-            
             new_vals[i] = run_amt
             work_queue -= run_amt
 
@@ -307,7 +312,14 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         # "initialization_time": dt.timedelta(days=1),
         "weather_file": weather_file_path,
         "verbosity": 7,
+        "equipment_kwargs": {
+            "Clothes Dryer": {
+                "capacity": 4000 
+            }
+        }
+
     }
+
 
     # Run Baseline (Uses un-shifted schedule)
     base_dwelling = Dwelling(
