@@ -19,7 +19,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'ERWH_Test_Loadshape_3'
+filename = 'ERWH_Test_Loadshape_7'
 Input_folder = "ERWH All Input Files 2"
 
 # Original OCHRE defaults folder
@@ -50,14 +50,14 @@ VPP_END_TIME = dt.time(23, 0)
 # Fleet-agnostic average power targets
 AVERAGE_SETPOINT_KW = 2.8     # Target average power PER HOME during VPP event
 AVERAGE_DEADBAND_KW = 0.01     # Tolerance PER HOME to prevent constant toggling
-ESTIMATED_LOAD_KW = 4.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
-ESTIMATED_SHED_KW = 0.5       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
+ESTIMATED_LOAD_KW = 5.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
+ESTIMATED_SHED_KW = 2.0       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
-KP = 2.0                      # Proportional gain
+KP = 1.0                      # Proportional gain
 KI = 0.1                      # Integral gain
-KD = 0.1                      # Derivative gain
+KD = 0.5                      # Derivative gain
 
 # HPWH control parameters (°F)
 Tcontrol_SHEDF = 126
