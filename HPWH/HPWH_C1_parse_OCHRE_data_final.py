@@ -27,27 +27,28 @@ def convert_custom_datetime(series):
 # enter in the input and output file names. 
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(script_dir)  
+fl_dir = os.path.dirname(script_dir)
+working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = "2025_All_630_1_45_1700_1_45_OS"
+input_file_root = "HPWH_Test_Loadshape_9"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
-input_file_1  = os.path.join(project_dir, input_file_name1 +".csv")
-input_file_2  = os.path.join(project_dir, input_file_name2 +".csv")
+input_file_1  = os.path.join(working_dir, input_file_name1 +".csv")
+input_file_2  = os.path.join(working_dir, input_file_name2 +".csv")
 
 output_append_WHpower = "_WH_power"
 output_file_name1 = input_file_name1 + output_append_WHpower + ".csv"
 output_file_name2 = input_file_name2 + output_append_WHpower + ".csv"
-folder_path = os.path.join(project_dir, "Ready_data", input_file_root)
-output_file_1 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name1)
-output_file_2 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name2)
+folder_path = os.path.join(working_dir, "Ready_data", input_file_root)
+output_file_1 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name1)
+output_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name2)
 
 output_append_totpower = "_total_power"
 output_file_name3 = input_file_name1 + output_append_totpower + ".csv"
 output_file_name4 = input_file_name2 + output_append_totpower + ".csv"
-output_file_3 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name3)
-output_file_4 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name4)
+output_file_3 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name3)
+output_file_4 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name4)
 
 
 ############################################################################

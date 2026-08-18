@@ -15,30 +15,31 @@ import matplotlib.ticker as ticker
 
 #Copy path naming from HPWH_parse_OCHRE_data_final.py for consistency
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(script_dir)  
+fl_dir = os.path.dirname(script_dir)
+working_dir = os.path.dirname(fl_dir) 
 
-input_file_root = "ERWH_30_test"
+input_file_root = "ERWH_Test_Loadshape_3"
 
 input_file_name1 = input_file_root + "_baseline"
 input_file_name2 = input_file_root + "_controlled"
-input_file_1  = os.path.join(project_dir, input_file_name1 +".csv")
-input_file_2  = os.path.join(project_dir, input_file_name2 +".csv")
+input_file_1  = os.path.join(working_dir, input_file_name1 +".csv")
+input_file_2  = os.path.join(working_dir, input_file_name2 +".csv")
 
 output_append_WHpower = "_WH_power"
 output_file_name1 = input_file_name1 + output_append_WHpower + ".csv"
 output_file_name2 = input_file_name2 + output_append_WHpower + ".csv"
-folder_path = os.path.join(project_dir, "Ready_data", input_file_root)
-output_file_1 = os.path.join(project_dir, "Ready_data", input_file_root,output_file_name1)
-output_file_2 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name2)
+folder_path = os.path.join(working_dir, "Ready_data", input_file_root)
+output_file_1 = os.path.join(working_dir, "Ready_data", input_file_root,output_file_name1)
+output_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name2)
 
 output_append_totpower = "_total_power"
 output_file_name3 = input_file_name1 + output_append_totpower + ".csv"
 output_file_name4 = input_file_name2 + output_append_totpower + ".csv"
-output_file_3 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name3)
-output_file_4 = os.path.join(project_dir, "Ready_data", input_file_root, output_file_name4)
+output_file_3 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name3)
+output_file_4 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name4)
 
-photo_file_1 = os.path.join(project_dir, "Ready_data", input_file_root, input_file_root + "_WH_power_plot.png")
-photo_file_2 = os.path.join(project_dir, "Ready_data", input_file_root, input_file_root + "_Total_power_plot.png")
+photo_file_1 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_WH_power_plot.png")
+photo_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_Total_power_plot.png")
 
 
 #Saves the average of each column as a new row

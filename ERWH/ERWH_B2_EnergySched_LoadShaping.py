@@ -1,6 +1,6 @@
 """
 Author: Thomas Metzler
-Created: 8/13/26
+Created: 8/17/26
 Adjusts load up and shed commands to keep power consumption at a constant level.
 """
 
@@ -19,8 +19,8 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'HPWH_Test_Loadshape_9'
-Input_folder = "HPWH All Input Files 2"
+filename = 'ERWH_Test_Loadshape_3'
+Input_folder = "ERWH All Input Files 2"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -48,10 +48,10 @@ VPP_START_TIME = dt.time(12, 0)
 VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
-AVERAGE_SETPOINT_KW = 1.9     # Target average power PER HOME during VPP event
+AVERAGE_SETPOINT_KW = 2.8     # Target average power PER HOME during VPP event
 AVERAGE_DEADBAND_KW = 0.01     # Tolerance PER HOME to prevent constant toggling
-ESTIMATED_LOAD_KW = 0.5       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
-ESTIMATED_SHED_KW = 0.3       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
+ESTIMATED_LOAD_KW = 4.0       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
+ESTIMATED_SHED_KW = 0.5       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
@@ -62,7 +62,7 @@ KD = 0.1                      # Derivative gain
 # HPWH control parameters (°F)
 Tcontrol_SHEDF = 126
 Tcontrol_deadbandF = 10
-Tcontrol_LOADF = 130
+Tcontrol_LOADF = 135
 Tcontrol_LOADdeadbandF = 2
 TbaselineF = 130
 TdeadbandF = 7
@@ -157,7 +157,7 @@ def aggregate_results(homes, work_dir):
 # HPWH / HVAC CONTROL & INITIALIZATION
 #########################################
 
-def determine_hpwh_control(global_mode="NORMAL"):
+def determine_erwh_control(global_mode="NORMAL"):
     """
     Highly simplified controller. 
     It purely reacts to the assigned global VPP mode.
@@ -379,7 +379,7 @@ if __name__ == "__main__":
             base_dw.update(control_signal=base_ctrl)
             
            # 2. Controlled Update (driven purely by the VPP state now)
-            control_cmd = determine_hpwh_control(global_mode=home_data["override"])
+            control_cmd = determine_erwh_control(global_mode=home_data["override"])
             
             # The update() method usually returns a dictionary of the current timestep's metrics
             metrics = sim_dw.update(control_signal=control_cmd)
