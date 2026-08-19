@@ -1,7 +1,6 @@
 """
 Author: Thomas Metzler
-Created: 8/18/26
-Amended: Reactive load shaping with dynamic load accumulation for Dryers
+Amended: Reactive load shaping with dynamic duty cycle and load accumulation for Dryers
 """
 
 import os
@@ -19,7 +18,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_Loadshape_1'
+filename = 'Dryer_test_Loadshape_2'
 Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
@@ -105,8 +104,8 @@ def aggregate_results(homes, work_dir):
     all_ctrl, all_base = [], []
     for home in homes:
         results_dir = os.path.join(home, "Results")
-        ctrl_file = os.path.join(results_dir, "home_controlled.csv")
-        base_file = os.path.join(results_dir, "home_baseline.csv")
+        ctrl_file = os.path.join(results_dir, "dryer_controlled.csv")
+        base_file = os.path.join(results_dir, "dryer_baseline.csv")
         
         if os.path.exists(ctrl_file):
             df_ctrl = pd.read_csv(ctrl_file)
@@ -174,6 +173,7 @@ def init_fleet_worker(home):
         "work_queue": 0.0,
         "was_in_shed": False,
         "orig_vals": orig_vals,
+        "new_vals": [], # Track executed dynamic schedule for CSV export
         "max_cap": max_cap,
         "dryer_col": dryer_col,
         "schedule_idx": 0
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     sim_times = fleet_data[0]["base"].sim_times
     average_power_kw = 0.0
 
-    vpp_state_log = [] # Add this line to initialize the log
+    vpp_state_log = []
 
     # PID State tracking variables
     integral_error = 0.0
@@ -295,7 +295,7 @@ if __name__ == "__main__":
             base_dw = home_data["base"]
             sim_dw = home_data["sim"]
             
-            # 1. Dynamic Load Accumulation & Shift Logic (Replacing prepare_schedules)
+            # 1. Dynamic Load Accumulation & Shift Logic
             idx = home_data["schedule_idx"]
             orig_val = home_data["orig_vals"][idx] if idx < len(home_data["orig_vals"]) else 0.0
             home_data["schedule_idx"] += 1
@@ -309,10 +309,11 @@ if __name__ == "__main__":
             run_amt = 0.0
             
             if home_data["work_queue"] > 0:
-                # Force 0 for boundary steps entering/exiting shed
+                # Boundary detection: force 0 for exactly one timestep to split the event
                 if is_in_shed != home_data["was_in_shed"]:
                     run_amt = 0.0
                 else:
+                    # Apply the DUTY CYCLE here instead of hard 0
                     if is_in_shed:
                         allowed_rate = home_data["max_cap"] * duty_cycle
                     else:
@@ -322,15 +323,16 @@ if __name__ == "__main__":
                     
             home_data["work_queue"] -= run_amt
             home_data["was_in_shed"] = is_in_shed
+            home_data["new_vals"].append(run_amt)
             
-            # Inject shifted schedule directly into dwelling schedule dataframe
-            if home_data["dryer_col"]:
-                if hasattr(sim_dw, 'schedule') and hasattr(sim_dw.schedule, 'df'):
-                    sim_dw.schedule.df.loc[sim_time, home_data["dryer_col"]] = run_amt
+            # 2. Send Control Signals to Dwellings
+            base_ctrl = {"Clothes Dryer": {"Load Fraction": 1}}
+            base_dw.update(control_signal=base_ctrl) 
             
-            # 2. Update Dwellings
-            base_dw.update() # Baseline updates naturally without modifications
-            metrics = sim_dw.update() 
+            # The Load Fraction calculation dynamically matches the duty cycle queue
+            lf = run_amt / home_data["max_cap"] if home_data["max_cap"] > 0 else 0.0
+            ctrl_cmd = {"Clothes Dryer": {"Load Fraction": lf}}
+            metrics = sim_dw.update(control_signal=ctrl_cmd) 
             
             # 3. Read back real-time power
             if isinstance(metrics, dict) and "Total Electric Power (kW)" in metrics:
@@ -373,6 +375,14 @@ if __name__ == "__main__":
         results_dir = os.path.join(home_path, "Results")
         os.makedirs(results_dir, exist_ok=True)
         
+        # Output dynamically generated schedule file for verification
+        shifted_df = pd.DataFrame({
+            "Time": sim_times,
+            "Original_Schedule": home_data["orig_vals"][:len(sim_times)],
+            "Executed_Schedule": home_data["new_vals"]
+        })
+        shifted_df.to_csv(os.path.join(results_dir, 'dynamic_schedule_executed.csv'), index=False)
+        
         df_base, _, _ = home_data["base"].finalize()
         df_ctrl, _, _ = home_data["sim"].finalize()
         
@@ -382,8 +392,8 @@ if __name__ == "__main__":
         df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
         df_base = df_base[[c for c in CTRL_COLS if c in df_base.columns]]
 
-        df_ctrl.to_csv(os.path.join(results_dir, 'home_controlled.csv'), index=False)
-        df_base.to_csv(os.path.join(results_dir, 'home_baseline.csv'), index=False)
+        df_ctrl.to_csv(os.path.join(results_dir, 'dryer_controlled.csv'), index=False)
+        df_base.to_csv(os.path.join(results_dir, 'dryer_baseline.csv'), index=False)
 
     # --- 4. Aggregate ---
     aggregate_results(homes, WORKING_DIR)
