@@ -59,44 +59,8 @@ duty_cycle = 0.5
 Start = dt.datetime(2018, 1, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
-
-# # HVAC control parameters (°F)
-# Tcontrol_SHEDF = 64         
-# Tcontrol_deadbandF = 2       
-# Tcontrol_LOADF = 72          
-# Tcontrol_LOADdeadbandF = 2
-# TbaselineF = 68              
-# TdeadbandF = 2
-# Tinit = 68                   
+                  
 count = 0
-
-# Schedule variant
-# my_schedule1 = {
-#     'M_LU_time': '06:30',
-#     'M_LU_duration': 0,
-#     'M_S_time': '07:30',
-#     'M_S_duration': 0,
-#     'E_ALU_time': '13:00',
-#     'E_ALU_duration': 1,
-#     'E_S_time': '14:00',
-#     'E_S_duration': 5
-# }
-
-# #new schedule variant with 0.25 hour shift for M_S and E_S, reduce secondary peak
-# my_schedule2 = my_schedule1.copy()
-# my_schedule2['M_S_duration'] = my_schedule1['M_S_duration'] + 0.25
-# my_schedule2['E_S_duration'] = my_schedule1['E_S_duration'] + 0.25
-
-# my_schedule3 = my_schedule1.copy()
-# my_schedule3['M_S_duration'] = my_schedule1['M_S_duration'] + 0.5
-# my_schedule3['E_S_duration'] = my_schedule1['E_S_duration'] + 0.5
-
-# my_schedule4 = my_schedule1.copy()
-# my_schedule4['M_S_duration'] = my_schedule1['M_S_duration'] + 0.75
-# my_schedule4['E_S_duration'] = my_schedule1['E_S_duration'] + 0.75
-
-# my_schedule = [my_schedule1, my_schedule2, my_schedule3, my_schedule4]
-
 
 # Schedule variant
 my_schedule1 = {
@@ -250,7 +214,7 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
             
         in_shed = in_shed | mask
 
-# 2. Accumulate and distribute load to conserve total schedule sum
+    # 2. Accumulate and distribute load to conserve total schedule sum
     orig_vals = df_sched[dryer_col].values
     new_vals = np.zeros_like(orig_vals, dtype=float)
     
@@ -311,14 +275,8 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "hpxml_file": os.path.join(home_path, XML_ADDRESS),
         # "initialization_time": dt.timedelta(days=1),
         "weather_file": weather_file_path,
-        "verbosity": 7,
-        "equipment_kwargs": {
-            "Clothes Dryer": {
-                "capacity": 4000 
-            }
+        "verbosity": 7
         }
-
-    }
 
 
     # Run Baseline (Uses un-shifted schedule)
