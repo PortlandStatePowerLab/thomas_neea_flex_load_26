@@ -18,7 +18,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_Loadshape_5'
+filename = 'Dryer_test_Loadshape_6'
 Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
@@ -65,19 +65,47 @@ count = 0
 # HELPER FUNCTIONS
 #########################################
 
-def filter_schedules(home_path):
+def filter_schedules(home_path, is_control=False):
     orig_sched_file = os.path.join(home_path, CSV_ADDRESS)
-    filtered_sched_file = os.path.join(home_path, 'filtered_schedules.csv')
+    file_suffix = 'ctrl' if is_control else 'base'
+    filtered_sched_file = os.path.join(home_path, f'filtered_schedules_{file_suffix}.csv')
 
     df_sched = pd.read_csv(orig_sched_file)
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
+    
+    # Ensure 'Time' is kept to allow datetime parsing
+    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names or col == 'Time']
     dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
     
-    if dropped_columns:
+    if dropped_columns and not is_control:
         print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
 
-    df_sched_filtered = df_sched[filtered_columns]
+    df_sched_filtered = df_sched[filtered_columns].copy()
+    
+    # --- PRE-PROCESS CONTROL SCHEDULE ---
+    if is_control and 'Time' in df_sched_filtered.columns:
+        dt_times = pd.to_datetime(df_sched_filtered['Time'])
+        time_of_day = dt_times.dt.time
+        
+        # Identify rows inside the global VPP window
+        in_window = (time_of_day >= VPP_START_TIME) & (time_of_day < VPP_END_TIME)
+        
+        dryer_cols = [c for c in df_sched_filtered.columns if 'dryer' in c.lower()]
+        if dryer_cols:
+            dryer_col = dryer_cols[0]
+            
+            # Find the start and end boundaries of the shed block
+            window_shifted = in_window.shift(1, fill_value=False)
+            start_of_sheds = in_window & ~window_shifted
+            end_of_sheds = in_window & ~in_window.shift(-1, fill_value=False)
+            
+            # 1. Adjust the schedule to 0.5 for the duty cycle during the shed
+            df_sched_filtered.loc[in_window, dryer_col] *= DUTY_CYCLE_FRACTION
+            
+            # 2. Assign 0 for a timestep at the start and end of each shed event
+            df_sched_filtered.loc[start_of_sheds, dryer_col] = 0.0
+            df_sched_filtered.loc[end_of_sheds, dryer_col] = 0.0
+
     df_sched_filtered.to_csv(filtered_sched_file, index=False)
     return filtered_sched_file
 
@@ -131,21 +159,26 @@ def aggregate_results(homes, work_dir):
 #########################################
 
 def initialize_home(home_path, weather_file_path):
-    filtered_sched_file = filter_schedules(home_path)
+    # Pass separate arguments so the base dwelling remains unshedded
+    base_sched_file = filter_schedules(home_path, is_control=False)
+    ctrl_sched_file = filter_schedules(home_path, is_control=True)
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
     
-    dwelling_args_local = {
+    dwelling_args_base = {
         "start_time": Start,
         "time_res": dt.timedelta(minutes=t_res),
         "duration": dt.timedelta(days=Duration),
         "hpxml_file": hpxml_file,
-        "hpxml_schedule_file": filtered_sched_file,
+        "hpxml_schedule_file": base_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
     }
+    
+    dwelling_args_ctrl = dwelling_args_base.copy()
+    dwelling_args_ctrl["hpxml_schedule_file"] = ctrl_sched_file
 
-    base_dwelling = Dwelling(name=f"Base_{os.path.basename(home_path)}", **dwelling_args_local)
-    sim_dwelling = Dwelling(name=f"Ctrl_{os.path.basename(home_path)}", **dwelling_args_local)
+    base_dwelling = Dwelling(name=f"Base_{os.path.basename(home_path)}", **dwelling_args_base)
+    sim_dwelling = Dwelling(name=f"Ctrl_{os.path.basename(home_path)}", **dwelling_args_ctrl)
     return base_dwelling, sim_dwelling
 
 def init_fleet_worker(home):
@@ -164,6 +197,11 @@ def init_fleet_worker(home):
     else:
         orig_vals = []
         max_cap = 1.0
+
+    # Calculate starting index to align with OCHRE's Start time
+    start_of_year = dt.datetime(Start.year, 1, 1, 0, 0)
+    time_diff = Start - start_of_year
+    start_idx = int(time_diff.total_seconds() / (t_res * 60))
         
     return {
         "base": base_dw, 
@@ -176,7 +214,7 @@ def init_fleet_worker(home):
         "new_vals": [], 
         "max_cap": max_cap,
         "dryer_col": dryer_col,
-        "schedule_idx": 0
+        "schedule_idx": start_idx
     }
 
 #########################################
@@ -308,20 +346,20 @@ if __name__ == "__main__":
             # --- State Machine & Queue Processing ---
             if home_data["pending_off"]:
                 # Step 1 after state transition: turn off for 1 time step
-                lf = 0.0
+                lf = 1.0  # Force to 1.0 per static preprocessing strategy
                 home_data["pending_off"] = False
             else:
                 if home_data["work_queue"] > 1e-4:
                     if home_data["mode"] == "SHED":
                         # Run at reduced duty cycle power consumption
-                        lf = DUTY_CYCLE_FRACTION
+                        lf = 1.0  # Force to 1.0
                         home_data["work_queue"] = max(0.0, home_data["work_queue"] - DUTY_CYCLE_FRACTION)
                     else:
                         # Run at normal power consumption
-                        lf = 1.0
+                        lf = 1.0  # Force to 1.0
                         home_data["work_queue"] = max(0.0, home_data["work_queue"] - 1.0)
                 else:
-                    lf = 0.0
+                    lf = 1.0  # Force to 1.0
                     home_data["work_queue"] = 0.0
 
             home_data["new_vals"].append(lf * home_data["max_cap"])
@@ -331,7 +369,7 @@ if __name__ == "__main__":
             base_dw.update(control_signal=base_ctrl) 
 
             # The Load Fraction calculation dynamically matches the duty cycle queue
-            ctrl_cmd = {"Clothes Dryer": {"Load Fraction": float(lf)}}
+            ctrl_cmd = {"Clothes Dryer": {"Load Fraction": 1}}
             metrics = sim_dw.update(control_signal=ctrl_cmd) 
             
             # 3. Read back real-time power
