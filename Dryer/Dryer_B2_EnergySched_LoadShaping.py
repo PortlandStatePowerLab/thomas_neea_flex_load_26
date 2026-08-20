@@ -18,7 +18,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_Loadshape_6'
+filename = 'Dryer_test_Loadshape_8'
 Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
@@ -81,30 +81,6 @@ def filter_schedules(home_path, is_control=False):
         print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
 
     df_sched_filtered = df_sched[filtered_columns].copy()
-    
-    # --- PRE-PROCESS CONTROL SCHEDULE ---
-    if is_control and 'Time' in df_sched_filtered.columns:
-        dt_times = pd.to_datetime(df_sched_filtered['Time'])
-        time_of_day = dt_times.dt.time
-        
-        # Identify rows inside the global VPP window
-        in_window = (time_of_day >= VPP_START_TIME) & (time_of_day < VPP_END_TIME)
-        
-        dryer_cols = [c for c in df_sched_filtered.columns if 'dryer' in c.lower()]
-        if dryer_cols:
-            dryer_col = dryer_cols[0]
-            
-            # Find the start and end boundaries of the shed block
-            window_shifted = in_window.shift(1, fill_value=False)
-            start_of_sheds = in_window & ~window_shifted
-            end_of_sheds = in_window & ~in_window.shift(-1, fill_value=False)
-            
-            # 1. Adjust the schedule to 0.5 for the duty cycle during the shed
-            df_sched_filtered.loc[in_window, dryer_col] *= DUTY_CYCLE_FRACTION
-            
-            # 2. Assign 0 for a timestep at the start and end of each shed event
-            df_sched_filtered.loc[start_of_sheds, dryer_col] = 0.0
-            df_sched_filtered.loc[end_of_sheds, dryer_col] = 0.0
 
     df_sched_filtered.to_csv(filtered_sched_file, index=False)
     return filtered_sched_file
@@ -273,6 +249,16 @@ if __name__ == "__main__":
         # Check if we are inside the VPP event window
         is_vpp_active = VPP_START_TIME <= current_time_of_day < VPP_END_TIME
 
+        # --- 1. Pre-update Work Queues for the current step ---
+        # This ensures the PID controller knows which dryers are active right now
+        for home_data in fleet_data:
+            idx = home_data["schedule_idx"]
+            orig_val = home_data["orig_vals"][idx] if idx < len(home_data["orig_vals"]) else 0.0
+            
+            if home_data["max_cap"] > 0 and orig_val > 0:
+                home_data["work_queue"] += (orig_val / home_data["max_cap"])
+
+        # --- 2. Active Load Shaping Dispatch Logic ---
         if is_vpp_active:
             # --- Active Load Shaping Dispatch Logic (Bidirectional & Asymmetrical) ---
             # PID error calculation: Error = Setpoint - Actual
@@ -326,51 +312,52 @@ if __name__ == "__main__":
             # Reset PID memory tracking to prevent baseline distortion at next event start
             integral_error = 0.0
             previous_error = 0.0
-
-        #Initialize 
+        
+        # --- 3. Process States & Execute Dynamic Schedule ---
         current_step_aggregate_power = 0.0
         
         for home_data in fleet_data:
             base_dw = home_data["base"]
             sim_dw = home_data["sim"]
+            dryer_col = home_data["dryer_col"]
             
-            # 1. Dynamic Load Accumulation & Shift Logic
+            # Increment the index for the schedule
             idx = home_data["schedule_idx"]
             orig_val = home_data["orig_vals"][idx] if idx < len(home_data["orig_vals"]) else 0.0
             home_data["schedule_idx"] += 1
             
-            # Accumulate active drying demand from schedule into the work queue
-            if home_data["max_cap"] > 0 and orig_val > 0:
-                home_data["work_queue"] += (orig_val / home_data["max_cap"])
-            
-            # --- State Machine & Queue Processing ---
+            # Determine the dynamic duty cycle multiplier for THIS timestep
             if home_data["pending_off"]:
-                # Step 1 after state transition: turn off for 1 time step
-                lf = 1.0  # Force to 1.0 per static preprocessing strategy
+                duty_cycle_multiplier = 0.0  # Enforce 1-step OFF transition
                 home_data["pending_off"] = False
             else:
                 if home_data["work_queue"] > 1e-4:
                     if home_data["mode"] == "SHED":
-                        # Run at reduced duty cycle power consumption
-                        lf = 1.0  # Force to 1.0
+                        # The PID has dynamically selected this home for a shed
+                        duty_cycle_multiplier = DUTY_CYCLE_FRACTION
                         home_data["work_queue"] = max(0.0, home_data["work_queue"] - DUTY_CYCLE_FRACTION)
                     else:
-                        # Run at normal power consumption
-                        lf = 1.0  # Force to 1.0
+                        duty_cycle_multiplier = 1.0  
                         home_data["work_queue"] = max(0.0, home_data["work_queue"] - 1.0)
                 else:
-                    lf = 1.0  # Force to 1.0
+                    duty_cycle_multiplier = 0.0  
                     home_data["work_queue"] = 0.0
 
-            home_data["new_vals"].append(lf * home_data["max_cap"])
+            # Calculate the literal schedule value we need to execute
+            # (Using max_cap ensures the schedule extends if a shed delayed the workload)
+            current_sched_val = duty_cycle_multiplier * home_data["max_cap"]
+            home_data["new_vals"].append(current_sched_val)
             
-            # Send control commands to OCHRE
-            base_ctrl = {"Clothes Dryer": {"Load Fraction": 1}}
-            base_dw.update(control_signal=base_ctrl) 
+            # --- DYNAMIC SCHEDULE INJECTION ---
+            # We directly overwrite the in-memory schedule value for this exact timestep.
+            if dryer_col and dryer_col in sim_dw.schedule.columns:
+                sim_dw.schedule.at[sim_time, dryer_col] = current_sched_val
+            
+            # 1. Baseline runs naturally using its unmodified schedule
+            base_dw.update() 
 
-            # The Load Fraction calculation dynamically matches the duty cycle queue
-            ctrl_cmd = {"Clothes Dryer": {"Load Fraction": 1}}
-            metrics = sim_dw.update(control_signal=ctrl_cmd) 
+            # 2. Control dwelling runs naturally, but reads the dynamically modified schedule row
+            metrics = sim_dw.update() 
             
             # 3. Read back real-time power
             if isinstance(metrics, dict) and "Total Electric Power (kW)" in metrics:
@@ -398,7 +385,7 @@ if __name__ == "__main__":
             "Units in NORMAL": normal_count,
             "Units in SHED": shed_count
         })
-
+        
     # --- 3. Finalize and Output Data ---
     print("Simulation complete! Finalizing results...")
     
