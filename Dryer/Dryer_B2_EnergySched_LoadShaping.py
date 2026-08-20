@@ -1,6 +1,6 @@
 """
 Author: Thomas Metzler
-Amended: Reactive load shaping with dynamic duty cycle and load accumulation for Dryers
+Amended: Dynamic Duty-Cycle Schedule Shifting with 1-Step Transition Delays
 """
 
 import os
@@ -18,7 +18,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_Loadshape_2'
+filename = 'Dryer_test_Loadshape_5'
 Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
@@ -41,9 +41,6 @@ Start = dt.datetime(2018, 1, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
-# Duty cycle for shed
-duty_cycle = 0.5
-
 # --- GLOBAL VPP EVENT SETTINGS ---
 # Define the time window for active load shaping
 VPP_START_TIME = dt.time(12, 0)
@@ -52,7 +49,10 @@ VPP_END_TIME = dt.time(23, 0)
 # Fleet-agnostic average power targets
 AVERAGE_SETPOINT_KW = 1.5     
 AVERAGE_DEADBAND_KW = 0.1     
-ESTIMATED_SHED_KW = 0.1       
+ESTIMATED_SHED_KW = 1.5  # Typical dryer demand in kW when active     
+
+# Duty cycle power fraction during SHED mode (e.g., 0.5 = 50% power)
+DUTY_CYCLE_FRACTION = 0.5
 
 # --- PID CONTROLLER GAINS ---
 KP = 1.0                      
@@ -124,7 +124,7 @@ def aggregate_results(homes, work_dir):
     if all_base:
         df_base_all = pd.concat(all_base, ignore_index=True)
         df_base_all.to_csv(os.path.join(work_dir, filename + "_baseline.csv"), index=False)
-    print(f"Aggregated CSVs written!")
+    print("Aggregated CSVs written!")
 
 #########################################
 # HPWH / HVAC CONTROL & INITIALIZATION
@@ -149,10 +149,10 @@ def initialize_home(home_path, weather_file_path):
     return base_dwelling, sim_dwelling
 
 def init_fleet_worker(home):
-    """Worker function to initialize dwellings and set up load queues"""
+    """Worker function to initialize dwellings and set up state tracking queues"""
     base_dw, sim_dw = initialize_home(home, WEATHER_FILE)
     
-    # Load original schedule for dynamic shifting logic
+    # Read original schedule to drive work queue inputs
     orig_sched_file = os.path.join(home, CSV_ADDRESS)
     df_sched = pd.read_csv(orig_sched_file)
     dryer_cols = [c for c in df_sched.columns if 'dryer' in c.lower()]
@@ -169,11 +169,11 @@ def init_fleet_worker(home):
         "base": base_dw, 
         "sim": sim_dw, 
         "path": home,
-        "override": "NORMAL",
-        "work_queue": 0.0,
-        "was_in_shed": False,
+        "mode": "NORMAL",             # State: 'NORMAL' or 'SHED'
+        "pending_off": False,          # Flag for 1-step OFF transition delay
+        "work_queue": 0.0,             # Accumulates active drying workload (in steps)
         "orig_vals": orig_vals,
-        "new_vals": [], # Track executed dynamic schedule for CSV export
+        "new_vals": [], 
         "max_cap": max_cap,
         "dryer_col": dryer_col,
         "schedule_idx": 0
@@ -188,28 +188,22 @@ if __name__ == "__main__":
     os.makedirs(INPUT_DIR, exist_ok=True)
     os.makedirs(WEATHER_DIR, exist_ok=True)
     
-    # Copy homes from defaults
-    count2 = 0
     for item in os.listdir(DEFAULT_INPUT):
-        count2 += 1
         src = os.path.join(DEFAULT_INPUT, item)
         dst = os.path.join(INPUT_DIR, item)
         if os.path.isdir(src) and not os.path.exists(dst):
             shutil.copytree(src, dst)
-            count += 1
-        count += 1
         
     # Copy weather file
     if not os.path.exists(WEATHER_FILE):
         shutil.copy(DEFAULT_WEATHER, WEATHER_FILE)
-        count += 1
 
     homes = find_all_homes(INPUT_DIR)
     print(f"Found {len(homes)} homes")
 
     # --- 1. Parallel Fleet Initialization ---
     fleet_data = []
-    print("Initializing dwellings (in parallel)...")
+    print("Initializing dwellings...")
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(init_fleet_worker, home) for home in homes]
         for f in concurrent.futures.as_completed(futures):
@@ -219,7 +213,7 @@ if __name__ == "__main__":
                 print("Initialization failed:", e)
 
     if not fleet_data:
-        print("No dwellings were initialized. Exiting.")
+        print("No dwellings initialized. Exiting.")
         exit()
 
     num_homes = len(fleet_data)
@@ -234,7 +228,7 @@ if __name__ == "__main__":
     integral_error = 0.0
     previous_error = 0.0
 
-    print("Starting Co-Simulation Time Loop...")
+    print("Starting Co-Simulation Loop...")
     for sim_time in sim_times:
         current_time_of_day = sim_time.time()
         
@@ -258,31 +252,38 @@ if __name__ == "__main__":
                 # OVER setpoint -> Issue SHED commands
                 total_kw_to_drop = abs(pid_output) * num_homes
                 
-                normal_homes = [h for h in fleet_data if h["override"] == "NORMAL"]
-                random.shuffle(normal_homes)
+                # ONLY target active dryers (work_queue > 0) currently in NORMAL mode
+                active_normal_homes = [
+                    h for h in fleet_data 
+                    if h["mode"] == "NORMAL" and h["work_queue"] > 1e-4
+                ]
+                random.shuffle(active_normal_homes)
                 
                 units_to_shed = int(total_kw_to_drop / ESTIMATED_SHED_KW)
-                shed_applied = min(units_to_shed, len(normal_homes))
+                shed_applied = min(units_to_shed, len(active_normal_homes))
                 
-                for h in normal_homes[:shed_applied]:
-                    h["override"] = "SHED"
+                for h in active_normal_homes[:shed_applied]:
+                    h["mode"] = "SHED"
+                    h["pending_off"] = True  # Enforce 1-step OFF transition
                         
             elif pid_output > AVERAGE_DEADBAND_KW:
                 # UNDER setpoint -> Restore SHED commands to NORMAL (No LOAD commands)
                 total_kw_to_add = pid_output * num_homes
                 
-                shed_homes = [h for h in fleet_data if h["override"] == "SHED"]
+                shed_homes = [h for h in fleet_data if h["mode"] == "SHED"]
                 random.shuffle(shed_homes)
                 
                 units_to_restore = int(total_kw_to_add / ESTIMATED_SHED_KW)
                 restored_applied = min(units_to_restore, len(shed_homes))
                 
                 for h in shed_homes[:restored_applied]:
-                    h["override"] = "NORMAL"
+                    h["mode"] = "NORMAL"
+                    h["pending_off"] = True  # Enforce 1-step OFF transition
         else:
-            # --- VPP is OFF. Force all homes back to normal ---
             for h in fleet_data:
-                h["override"] = "NORMAL"
+                if h["mode"] == "SHED":
+                    h["mode"] = "NORMAL"
+                    h["pending_off"] = True
             
             # Reset PID memory tracking to prevent baseline distortion at next event start
             integral_error = 0.0
@@ -300,38 +301,37 @@ if __name__ == "__main__":
             orig_val = home_data["orig_vals"][idx] if idx < len(home_data["orig_vals"]) else 0.0
             home_data["schedule_idx"] += 1
             
-            # Accumulate scheduled work
-            home_data["work_queue"] += orig_val
-            if home_data["work_queue"] < 1e-6:
-                home_data["work_queue"] = 0.0
-                
-            is_in_shed = (home_data["override"] == "SHED")
-            run_amt = 0.0
+            # Accumulate active drying demand from schedule into the work queue
+            if home_data["max_cap"] > 0 and orig_val > 0:
+                home_data["work_queue"] += (orig_val / home_data["max_cap"])
             
-            if home_data["work_queue"] > 0:
-                # Boundary detection: force 0 for exactly one timestep to split the event
-                if is_in_shed != home_data["was_in_shed"]:
-                    run_amt = 0.0
-                else:
-                    # Apply the DUTY CYCLE here instead of hard 0
-                    if is_in_shed:
-                        allowed_rate = home_data["max_cap"] * duty_cycle
+            # --- State Machine & Queue Processing ---
+            if home_data["pending_off"]:
+                # Step 1 after state transition: turn off for 1 time step
+                lf = 0.0
+                home_data["pending_off"] = False
+            else:
+                if home_data["work_queue"] > 1e-4:
+                    if home_data["mode"] == "SHED":
+                        # Run at reduced duty cycle power consumption
+                        lf = DUTY_CYCLE_FRACTION
+                        home_data["work_queue"] = max(0.0, home_data["work_queue"] - DUTY_CYCLE_FRACTION)
                     else:
-                        allowed_rate = home_data["max_cap"]
-                        
-                    run_amt = min(home_data["work_queue"], allowed_rate)
-                    
-            home_data["work_queue"] -= run_amt
-            home_data["was_in_shed"] = is_in_shed
-            home_data["new_vals"].append(run_amt)
+                        # Run at normal power consumption
+                        lf = 1.0
+                        home_data["work_queue"] = max(0.0, home_data["work_queue"] - 1.0)
+                else:
+                    lf = 0.0
+                    home_data["work_queue"] = 0.0
+
+            home_data["new_vals"].append(lf * home_data["max_cap"])
             
-            # 2. Send Control Signals to Dwellings
+            # Send control commands to OCHRE
             base_ctrl = {"Clothes Dryer": {"Load Fraction": 1}}
             base_dw.update(control_signal=base_ctrl) 
-            
+
             # The Load Fraction calculation dynamically matches the duty cycle queue
-            lf = run_amt / home_data["max_cap"] if home_data["max_cap"] > 0 else 0.0
-            ctrl_cmd = {"Clothes Dryer": {"Load Fraction": lf}}
+            ctrl_cmd = {"Clothes Dryer": {"Load Fraction": float(lf)}}
             metrics = sim_dw.update(control_signal=ctrl_cmd) 
             
             # 3. Read back real-time power
@@ -349,9 +349,8 @@ if __name__ == "__main__":
         aggregate_power_kw = current_step_aggregate_power
         average_power_kw = aggregate_power_kw / num_homes
 
-        # Log Fleet States for this Timestep ---
-        shed_count = sum(1 for h in fleet_data if h["override"] == "SHED")
-        normal_count = sum(1 for h in fleet_data if h["override"] == "NORMAL")
+        shed_count = sum(1 for h in fleet_data if h["mode"] == "SHED")
+        normal_count = sum(1 for h in fleet_data if h["mode"] == "NORMAL")
         
         vpp_state_log.append({
             "Time": sim_time,
