@@ -1,12 +1,19 @@
 """
 Author: Thomas Metzler
-Amended: Dynamic Duty-Cycle Schedule Shifting with 1-Step Transition Delays
+Created: 8/19/26
+
+Adjusts load up and shed commands to keep dryer fleet power consumption at a constant level.
+Modified to account for dryer constraints (managing load via SHED and NORMAL restoration only).
+Runs the baseline and calculates the number of homes to shed, then adjusts schedule and runs controlled.
+Schedules can not be adjusted dynamically, and dryers can only be controlled through schedules.
+Only sends sheds to active dryers. 
 """
 
 import os
 import shutil
 import datetime as dt
 import pandas as pd
+import numpy as np
 from ochre import Dwelling
 from ochre.utils.schedule import ALL_SCHEDULE_NAMES
 import concurrent.futures
@@ -18,7 +25,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_Loadshape_9'
+filename = 'Dryer_test_Loadshape_10'
 Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
@@ -42,14 +49,13 @@ Duration = 2  # days
 t_res = 15  # minutes
 
 # --- GLOBAL VPP EVENT SETTINGS ---
-# Define the time window for active load shaping
 VPP_START_TIME = dt.time(12, 0)
 VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
 AVERAGE_SETPOINT_KW = 1.5     
 AVERAGE_DEADBAND_KW = 0.1     
-ESTIMATED_SHED_KW = 1.5  # Typical dryer demand in kW when active     
+ESTIMATED_SHED_KW = 1.5  
 
 # Duty cycle power fraction during SHED mode (e.g., 0.5 = 50% power)
 DUTY_CYCLE_FRACTION = 0.5
@@ -59,31 +65,9 @@ KP = 1.0
 KI = 0.8                      
 KD = 1.0                      
 
-count = 0
-
 #########################################
 # HELPER FUNCTIONS
 #########################################
-
-def filter_schedules(home_path, is_control=False):
-    orig_sched_file = os.path.join(home_path, CSV_ADDRESS)
-    file_suffix = 'ctrl' if is_control else 'base'
-    filtered_sched_file = os.path.join(home_path, f'filtered_schedules_{file_suffix}.csv')
-
-    df_sched = pd.read_csv(orig_sched_file)
-    valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    
-    # Ensure 'Time' is kept to allow datetime parsing
-    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names or col == 'Time']
-    dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
-    
-    if dropped_columns and not is_control:
-        print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
-
-    df_sched_filtered = df_sched[filtered_columns].copy()
-
-    df_sched_filtered.to_csv(filtered_sched_file, index=False)
-    return filtered_sched_file
 
 def find_all_homes(base_dir):
     homes = []
@@ -131,13 +115,180 @@ def aggregate_results(homes, work_dir):
     print("Aggregated CSVs written!")
 
 #########################################
-# HPWH / HVAC CONTROL & INITIALIZATION
+# PASS 1: PYTHON VPP PRE-SIMULATION
+#########################################
+
+def pre_process_schedules(homes):
+    """
+    Simulates the entire year purely in Pandas to calculate the PID logic, 
+    delay events with 0-timesteps, apply the duty cycle, and shift energy.
+    """
+    print(f"--- PASS 1: Pre-processing Schedules for {len(homes)} homes ---")
+    fleet_data = []
+    
+    # Load all homes into memory
+    for home in homes:
+        orig_sched_file = os.path.join(home, CSV_ADDRESS)
+        df = pd.read_csv(orig_sched_file)
+        
+        dryer_cols = [c for c in df.columns if 'dryer' in c.lower()]
+        dryer_col = dryer_cols[0] if dryer_cols else None
+        
+        if dryer_col:
+            orig_vals = df[dryer_col].values
+            max_cap = orig_vals.max() if orig_vals.max() > 0 else 1.0
+        else:
+            orig_vals = np.zeros(len(df))
+            max_cap = 1.0
+            
+        fleet_data.append({
+            "path": home,
+            "df": df,
+            "dryer_col": dryer_col,
+            "orig_vals": orig_vals,
+            "new_vals": [],
+            "max_cap": max_cap,
+            "mode": "NORMAL",
+            "pending_off": False,
+            "work_queue": 0.0
+        })
+
+    # Generate the time series using the simulation parameters to match OCHRE exactly
+    time_series = pd.date_range(
+        start=Start, 
+        periods=len(fleet_data[0]["df"]), 
+        freq=pd.Timedelta(minutes=t_res)
+    )
+    
+    average_power_kw = 0.0
+    integral_error = 0.0
+    previous_error = 0.0
+    num_homes = len(fleet_data)
+    vpp_state_log = []
+    
+    # Run the Python Time Loop
+    for idx, current_time in enumerate(time_series):
+        current_time_of_day = current_time.time()
+        is_vpp_active = VPP_START_TIME <= current_time_of_day < VPP_END_TIME
+        
+        # 1. Update Energy Queues
+        for h in fleet_data:
+            val = h["orig_vals"][idx]
+            if h["max_cap"] > 0 and val > 0:
+                h["work_queue"] += (val / h["max_cap"])
+                
+        # 2. VPP / PID Logic
+        if is_vpp_active:
+            error = AVERAGE_SETPOINT_KW - average_power_kw
+            integral_error += error
+            derivative_error = error - previous_error
+            previous_error = error
+            
+            pid_output = (KP * error) + (KI * integral_error) + (KD * derivative_error)
+            
+            if pid_output < -AVERAGE_DEADBAND_KW:
+                total_kw_to_drop = abs(pid_output) * num_homes
+                
+                # REQUIREMENT MET: Only target active dryers
+                active_normal_homes = [
+                    h for h in fleet_data 
+                    if h["mode"] == "NORMAL" and h["work_queue"] > 1e-4
+                ]
+                random.shuffle(active_normal_homes)
+                
+                units_to_shed = int(total_kw_to_drop / ESTIMATED_SHED_KW)
+                shed_applied = min(units_to_shed, len(active_normal_homes))
+                
+                for h in active_normal_homes[:shed_applied]:
+                    h["mode"] = "SHED"
+                    h["pending_off"] = True  # REQUIREMENT MET: 1-step OFF transition
+                    
+            elif pid_output > AVERAGE_DEADBAND_KW:
+                total_kw_to_add = pid_output * num_homes
+                shed_homes = [h for h in fleet_data if h["mode"] == "SHED"]
+                random.shuffle(shed_homes)
+                
+                units_to_restore = int(total_kw_to_add / ESTIMATED_SHED_KW)
+                restored_applied = min(units_to_restore, len(shed_homes))
+                
+                for h in shed_homes[:restored_applied]:
+                    h["mode"] = "NORMAL"
+                    h["pending_off"] = True  # REQUIREMENT MET: 1-step OFF transition
+        else:
+            for h in fleet_data:
+                if h["mode"] == "SHED":
+                    h["mode"] = "NORMAL"
+                    h["pending_off"] = True
+            integral_error = 0.0
+            previous_error = 0.0
+            
+        # 3. Dispense Energy & Build New Schedule Array
+        current_step_aggregate = 0.0
+        for h in fleet_data:
+            if h["pending_off"]:
+                dispense = 0.0
+                h["pending_off"] = False
+            elif h["work_queue"] > 1e-4:
+                if h["mode"] == "SHED":
+                    dispense = min(DUTY_CYCLE_FRACTION, h["work_queue"])
+                else:
+                    dispense = min(1.0, h["work_queue"])
+                h["work_queue"] = max(0.0, h["work_queue"] - dispense)
+            else:
+                dispense = 0.0
+                h["work_queue"] = 0.0
+                
+            val_kw = dispense * h["max_cap"]
+            h["new_vals"].append(val_kw)
+            current_step_aggregate += val_kw
+            
+        average_power_kw = current_step_aggregate / num_homes
+        
+        vpp_state_log.append({
+            "Time": current_time,
+            "Target Average Power (kW)": AVERAGE_SETPOINT_KW if is_vpp_active else "OFF",
+            "Actual Average Power (kW)": average_power_kw,
+            "Aggregate Power (kW)": current_step_aggregate,
+            "Units in NORMAL": sum(1 for h in fleet_data if h["mode"] == "NORMAL"),
+            "Units in SHED": sum(1 for h in fleet_data if h["mode"] == "SHED")
+        })
+
+    # 4. Save Finalized Schedules
+    valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
+    for h in fleet_data:
+        df = h["df"]
+        filtered_cols = [col for col in df.columns if col in valid_schedule_names or col == 'Time']
+        
+        # Base schedule (Unmodified)
+        df_base = df[filtered_cols].copy()
+        df_base.to_csv(os.path.join(h["path"], 'filtered_schedules_base.csv'), index=False)
+        
+        # Control schedule (Dynamically Shifted)
+        df_ctrl = df[filtered_cols].copy()
+        if h["dryer_col"]:
+            df_ctrl[h["dryer_col"]] = h["new_vals"]
+        df_ctrl.to_csv(os.path.join(h["path"], 'filtered_schedules_ctrl.csv'), index=False)
+        
+        # Verification File
+        results_dir = os.path.join(h["path"], "Results")
+        os.makedirs(results_dir, exist_ok=True)
+        pd.DataFrame({
+            "Time": time_series,
+            "Original_Schedule": h["orig_vals"],
+            "Executed_Schedule": h["new_vals"]
+        }).to_csv(os.path.join(results_dir, 'dynamic_schedule_executed.csv'), index=False)
+        
+    print("Pass 1 Complete!")
+    return pd.DataFrame(vpp_state_log)
+
+#########################################
+# PASS 2: OCHRE CO-SIMULATION
 #########################################
 
 def initialize_home(home_path, weather_file_path):
-    # Pass separate arguments so the base dwelling remains unshedded
-    base_sched_file = filter_schedules(home_path, is_control=False)
-    ctrl_sched_file = filter_schedules(home_path, is_control=True)
+    # Dwellings now simply load the pre-baked schedules we generated in Pass 1
+    base_sched_file = os.path.join(home_path, 'filtered_schedules_base.csv')
+    ctrl_sched_file = os.path.join(home_path, 'filtered_schedules_ctrl.csv')
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
     
     dwelling_args_base = {
@@ -160,42 +311,7 @@ def initialize_home(home_path, weather_file_path):
 def init_fleet_worker(home):
     """Worker function to initialize dwellings and set up state tracking queues"""
     base_dw, sim_dw = initialize_home(home, WEATHER_FILE)
-    
-    # Read original schedule to drive work queue inputs
-    orig_sched_file = os.path.join(home, CSV_ADDRESS)
-    df_sched = pd.read_csv(orig_sched_file)
-    dryer_cols = [c for c in df_sched.columns if 'dryer' in c.lower()]
-    dryer_col = dryer_cols[0] if dryer_cols else None
-    
-    if dryer_col:
-        orig_vals = df_sched[dryer_col].values
-        max_cap = orig_vals.max() if orig_vals.max() > 0 else 1.0
-    else:
-        orig_vals = []
-        max_cap = 1.0
-
-    # Calculate starting index to align with OCHRE's Start time
-    start_of_year = dt.datetime(Start.year, 1, 1, 0, 0)
-    time_diff = Start - start_of_year
-    start_idx = int(time_diff.total_seconds() / (t_res * 60))
-        
-    return {
-        "base": base_dw, 
-        "sim": sim_dw, 
-        "path": home,
-        "mode": "NORMAL",             # State: 'NORMAL' or 'SHED'
-        "pending_off": False,          # Flag for 1-step OFF transition delay
-        "work_queue": 0.0,             # Accumulates active drying workload (in steps)
-        "orig_vals": orig_vals,
-        "new_vals": [], 
-        "max_cap": max_cap,
-        "dryer_col": dryer_col,
-        "schedule_idx": start_idx
-    }
-
-#########################################
-# MAIN EXECUTION
-#########################################
+    return {"base": base_dw, "sim": sim_dw, "path": home}
 
 if __name__ == "__main__":
     # --- Directory Setup ---
@@ -213,11 +329,17 @@ if __name__ == "__main__":
         shutil.copy(DEFAULT_WEATHER, WEATHER_FILE)
 
     homes = find_all_homes(INPUT_DIR)
-    print(f"Found {len(homes)} homes")
-
-    # --- 1. Parallel Fleet Initialization ---
+    
+    # =========================================================================
+    # EXECUTE PASS 1
+    # =========================================================================
+    df_vpp_log_full = pre_process_schedules(homes)
+    
+    # =========================================================================
+    # EXECUTE PASS 2
+    # =========================================================================
     fleet_data = []
-    print("Initializing dwellings...")
+    print("--- PASS 2: Initializing OCHRE Dwellings ---")
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(init_fleet_worker, home) for home in homes]
         for f in concurrent.futures.as_completed(futures):
@@ -230,167 +352,17 @@ if __name__ == "__main__":
         print("No dwellings initialized. Exiting.")
         exit()
 
-    num_homes = len(fleet_data)
-    
-    # --- 2. Co-Simulation Time Loop Setup ---
     sim_times = fleet_data[0]["base"].sim_times
-    average_power_kw = 0.0
 
-    vpp_state_log = []
-
-    # PID State tracking variables
-    integral_error = 0.0
-    previous_error = 0.0
-
-    print("Starting Co-Simulation Loop...")
+    print("Starting OCHRE Native Co-Simulation Loop (No Overrides)...")
     for sim_time in sim_times:
-        current_time_of_day = sim_time.time()
-        
-        # Check if we are inside the VPP event window
-        is_vpp_active = VPP_START_TIME <= current_time_of_day < VPP_END_TIME
-
-        # --- 1. Pre-update Work Queues for the current step ---
-        # This ensures the PID controller knows which dryers are active right now
+        # We completely removed the Python PID logic from here. 
+        # OCHRE runs using the pre-shifted schedules
         for home_data in fleet_data:
-            idx = home_data["schedule_idx"]
-            orig_val = home_data["orig_vals"][idx] if idx < len(home_data["orig_vals"]) else 0.0
-            
-            if home_data["max_cap"] > 0 and orig_val > 0:
-                home_data["work_queue"] += (orig_val / home_data["max_cap"])
+            home_data["base"].update() 
+            home_data["sim"].update() 
 
-        # --- 2. Active Load Shaping Dispatch Logic ---
-        if is_vpp_active:
-            # --- Active Load Shaping Dispatch Logic (Bidirectional & Asymmetrical) ---
-            # PID error calculation: Error = Setpoint - Actual
-            error = AVERAGE_SETPOINT_KW - average_power_kw
-            
-            # Discrete-time tracking transformations
-            integral_error += error
-            derivative_error = error - previous_error
-            previous_error = error
-            
-            # Compute PID output value
-            pid_output = (KP * error) + (KI * integral_error) + (KD * derivative_error)
-            
-            if pid_output < -AVERAGE_DEADBAND_KW:
-                # OVER setpoint -> Issue SHED commands
-                total_kw_to_drop = abs(pid_output) * num_homes
-                
-                # ONLY target active dryers (work_queue > 0) currently in NORMAL mode
-                active_normal_homes = [
-                    h for h in fleet_data 
-                    if h["mode"] == "NORMAL" and h["work_queue"] > 1e-4
-                ]
-                random.shuffle(active_normal_homes)
-                
-                units_to_shed = int(total_kw_to_drop / ESTIMATED_SHED_KW)
-                shed_applied = min(units_to_shed, len(active_normal_homes))
-                
-                for h in active_normal_homes[:shed_applied]:
-                    h["mode"] = "SHED"
-                    h["pending_off"] = True  # Enforce 1-step OFF transition
-                        
-            elif pid_output > AVERAGE_DEADBAND_KW:
-                # UNDER setpoint -> Restore SHED commands to NORMAL (No LOAD commands)
-                total_kw_to_add = pid_output * num_homes
-                
-                shed_homes = [h for h in fleet_data if h["mode"] == "SHED"]
-                random.shuffle(shed_homes)
-                
-                units_to_restore = int(total_kw_to_add / ESTIMATED_SHED_KW)
-                restored_applied = min(units_to_restore, len(shed_homes))
-                
-                for h in shed_homes[:restored_applied]:
-                    h["mode"] = "NORMAL"
-                    h["pending_off"] = True  # Enforce 1-step OFF transition
-        else:
-            for h in fleet_data:
-                if h["mode"] == "SHED":
-                    h["mode"] = "NORMAL"
-                    h["pending_off"] = True
-            
-            # Reset PID memory tracking to prevent baseline distortion at next event start
-            integral_error = 0.0
-            previous_error = 0.0
-        
-        # --- 3. Process States & Execute Dynamic Schedule ---
-        current_step_aggregate_power = 0.0
-        
-        for home_data in fleet_data:
-            base_dw = home_data["base"]
-            sim_dw = home_data["sim"]
-            dryer_col = home_data["dryer_col"]
-            
-            # Increment the index for the schedule
-            idx = home_data["schedule_idx"]
-            orig_val = home_data["orig_vals"][idx] if idx < len(home_data["orig_vals"]) else 0.0
-            home_data["schedule_idx"] += 1
-            
-            # Determine the dynamic duty cycle multiplier for THIS timestep
-            if home_data["pending_off"]:
-                duty_cycle_multiplier = 0.0  # Enforce 1-step OFF transition
-                home_data["pending_off"] = False
-            else:
-                if home_data["work_queue"] > 1e-4:
-                    if home_data["mode"] == "SHED":
-                        # The PID has dynamically selected this home for a shed
-                        duty_cycle_multiplier = DUTY_CYCLE_FRACTION
-                        home_data["work_queue"] = max(0.0, home_data["work_queue"] - DUTY_CYCLE_FRACTION)
-                    else:
-                        duty_cycle_multiplier = 1.0  
-                        home_data["work_queue"] = max(0.0, home_data["work_queue"] - 1.0)
-                else:
-                    duty_cycle_multiplier = 0.0  
-                    home_data["work_queue"] = 0.0
-
-            # Calculate the literal schedule value we need to execute
-            # (Using max_cap ensures the schedule extends if a shed delayed the workload)
-            current_sched_val = duty_cycle_multiplier * home_data["max_cap"]
-            home_data["new_vals"].append(current_sched_val)
-            
-            # --- DYNAMIC EQUIPMENT ARRAY INJECTION ---
-            # sim_dw.equipment is a dictionary mapping string names to equipment objects
-            dryer_equip = sim_dw.equipment.get("Clothes Dryer")
-            
-            if dryer_equip and hasattr(dryer_equip, 'schedule'):
-                # Overwrite the pre-loaded schedule array at the exact current timestep.
-                # This guarantees the equipment sees the duty cycle change, with NO load fractions.
-                dryer_equip.schedule[idx] = current_sched_val
-            
-            # 1. Baseline runs naturally using its unmodified schedule array
-            base_dw.update() 
-
-            # 2. Control dwelling runs normally, but reads the dynamically injected array value
-            metrics = sim_dw.update() 
-            
-            # 3. Read back real-time power
-            if isinstance(metrics, dict) and "Total Electric Power (kW)" in metrics:
-                home_power = metrics["Total Electric Power (kW)"]
-            elif hasattr(sim_dw, 'current_results'):
-                home_power = sim_dw.current_results.get("Total Electric Power (kW)", 0.0)
-            else:
-                # Failsafe so the code doesn't crash, though it means our VPP controller will read 0
-                home_power = 0.0 
-                
-            current_step_aggregate_power += home_power
-            
-        # Recalculate average fleet power for the next time step's logic
-        aggregate_power_kw = current_step_aggregate_power
-        average_power_kw = aggregate_power_kw / num_homes
-
-        shed_count = sum(1 for h in fleet_data if h["mode"] == "SHED")
-        normal_count = sum(1 for h in fleet_data if h["mode"] == "NORMAL")
-        
-        vpp_state_log.append({
-            "Time": sim_time,
-            "Target Average Power (kW)": AVERAGE_SETPOINT_KW if is_vpp_active else "OFF",
-            "Actual Average Power (kW)": average_power_kw,
-            "Aggregate Power (kW)": aggregate_power_kw,
-            "Units in NORMAL": normal_count,
-            "Units in SHED": shed_count
-        })
-        
-    # --- 3. Finalize and Output Data ---
+    # --- Finalize and Output Data ---
     print("Simulation complete! Finalizing results...")
     
     CTRL_COLS = [
@@ -401,15 +373,6 @@ if __name__ == "__main__":
     for home_data in fleet_data:
         home_path = home_data["path"]
         results_dir = os.path.join(home_path, "Results")
-        os.makedirs(results_dir, exist_ok=True)
-        
-        # Output dynamically generated schedule file for verification
-        shifted_df = pd.DataFrame({
-            "Time": sim_times,
-            "Original_Schedule": home_data["orig_vals"][:len(sim_times)],
-            "Executed_Schedule": home_data["new_vals"]
-        })
-        shifted_df.to_csv(os.path.join(results_dir, 'dynamic_schedule_executed.csv'), index=False)
         
         df_base, _, _ = home_data["base"].finalize()
         df_ctrl, _, _ = home_data["sim"].finalize()
@@ -423,12 +386,12 @@ if __name__ == "__main__":
         df_ctrl.to_csv(os.path.join(results_dir, 'dryer_controlled.csv'), index=False)
         df_base.to_csv(os.path.join(results_dir, 'dryer_baseline.csv'), index=False)
 
-    # --- 4. Aggregate ---
+    # Aggregate CSVs
     aggregate_results(homes, WORKING_DIR)
 
-    # --- 5. Export VPP State Log ---
+    # Export VPP State Log (Filtered to match the OCHRE simulation timeframe)
     print("Saving VPP state log...")
-    df_vpp_log = pd.DataFrame(vpp_state_log)
+    df_vpp_log_filtered = df_vpp_log_full[df_vpp_log_full["Time"].isin(sim_times)]
     vpp_log_path = os.path.join(WORKING_DIR, filename + "_VPP_Fleet_States.csv")
-    df_vpp_log.to_csv(vpp_log_path, index=False)
+    df_vpp_log_filtered.to_csv(vpp_log_path, index=False)
     print(f"VPP State Log saved to: {vpp_log_path}")
