@@ -18,7 +18,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_Loadshape_8'
+filename = 'Dryer_test_Loadshape_9'
 Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
@@ -348,15 +348,19 @@ if __name__ == "__main__":
             current_sched_val = duty_cycle_multiplier * home_data["max_cap"]
             home_data["new_vals"].append(current_sched_val)
             
-            # --- DYNAMIC SCHEDULE INJECTION ---
-            # We directly overwrite the in-memory schedule value for this exact timestep.
-            if dryer_col and dryer_col in sim_dw.schedule.columns:
-                sim_dw.schedule.at[sim_time, dryer_col] = current_sched_val
+            # --- DYNAMIC EQUIPMENT ARRAY INJECTION ---
+            # sim_dw.equipment is a dictionary mapping string names to equipment objects
+            dryer_equip = sim_dw.equipment.get("Clothes Dryer")
             
-            # 1. Baseline runs naturally using its unmodified schedule
+            if dryer_equip and hasattr(dryer_equip, 'schedule'):
+                # Overwrite the pre-loaded schedule array at the exact current timestep.
+                # This guarantees the equipment sees the duty cycle change, with NO load fractions.
+                dryer_equip.schedule[idx] = current_sched_val
+            
+            # 1. Baseline runs naturally using its unmodified schedule array
             base_dw.update() 
 
-            # 2. Control dwelling runs naturally, but reads the dynamically modified schedule row
+            # 2. Control dwelling runs normally, but reads the dynamically injected array value
             metrics = sim_dw.update() 
             
             # 3. Read back real-time power
