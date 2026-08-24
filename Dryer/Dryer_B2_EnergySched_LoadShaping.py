@@ -24,7 +24,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Dryer_test_Loadshape_12'
+filename = 'Dryer_test_Loadshape_17'
 Input_folder = "Dryer Input Files 2"
 
 # Original OCHRE defaults folder
@@ -52,17 +52,17 @@ VPP_START_TIME = dt.time(12, 0)
 VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
-AVERAGE_SETPOINT_KW = 1.5     
+AVERAGE_SETPOINT_KW = 2.0     
 AVERAGE_DEADBAND_KW = 0.1     
 ESTIMATED_SHED_KW = 1.5  
 
 # Duty cycle power fraction during SHED mode
-DUTY_CYCLE_FRACTION = 0.5
+DUTY_CYCLE_FRACTION = 0.25
 
 # --- PID CONTROLLER GAINS ---
 KP = 1.0                      
-KI = 0.8                      
-KD = 1.0                      
+KI = 0.1                      
+KD = 0.5                      
 
 #########################################
 # HELPER FUNCTIONS
@@ -135,7 +135,7 @@ if __name__ == "__main__":
         print("No homes found. Exiting.")
         exit()
 
-# =========================================================================
+    # =========================================================================
     # PASS 1: OCHRE BASELINE RUN
     # =========================================================================
     print(f"--- PASS 1: Running Baseline OCHRE for {len(homes)} homes ---")
@@ -180,20 +180,34 @@ if __name__ == "__main__":
         df, _, _ = b["dw"].finalize()
         baseline_data[b["path"]] = df
 
-    # =========================================================================
+# =========================================================================
     # PASS 2: PYTHON VPP CONTROLLER & SCHEDULE SHIFTING
     # =========================================================================
     print("--- PASS 2: Calculating Shifted Schedules with PID ---")
     fleet_data = []
     
-    # Load all homes into memory
+    # Assume the schedule CSV represents a full year starting on Jan 1 of the simulation year
+    start_of_year = dt.datetime(Start.year, 1, 1, 0, 0)
+    
     for home in homes:
         orig_sched_file = os.path.join(home, CSV_ADDRESS)
         df_sched = pd.read_csv(orig_sched_file)
+        
+        # Generate the full time series to map CSV rows to real timestamps
+        full_time_series = pd.date_range(
+            start=start_of_year, 
+            periods=len(df_sched), 
+            freq=pd.Timedelta(minutes=t_res)
+        )
+        
+        # Create a fast lookup dictionary for mapping timestamps to CSV row indexes
+        time_to_idx = {time: i for i, time in enumerate(full_time_series)}
+        
         df_base_out = baseline_data[home]
         
         dryer_cols = [c for c in df_sched.columns if 'dryer' in c.lower()]
         dryer_col = dryer_cols[0] if dryer_cols else None
+        
         orig_vals = df_sched[dryer_col].values if dryer_col else np.zeros(len(df_sched))
         max_cap = orig_vals.max() if orig_vals.max() > 0 else 1.0
         
@@ -207,7 +221,8 @@ if __name__ == "__main__":
             "max_cap": max_cap,
             "mode": "NORMAL",
             "pending_off": False,
-            "work_queue": 0.0
+            "work_queue": 0.0,
+            "time_to_idx": time_to_idx # Store the lookup dict here for convenience
         })
 
     average_power_kw = 0.0 
@@ -217,13 +232,14 @@ if __name__ == "__main__":
     num_homes = len(fleet_data)
     vpp_state_log = []
 
-    for idx, current_time in enumerate(sim_times):
+    for current_time in sim_times:
         current_time_of_day = current_time.time()
         is_vpp_active = VPP_START_TIME <= current_time_of_day < VPP_END_TIME
         
         # 1. Update Energy Queues
         for h in fleet_data:
-            val = h["orig_vals"][idx]
+            csv_idx = h["time_to_idx"][current_time] # Find the true row for this timestamp
+            val = h["orig_vals"][csv_idx]
             if h["max_cap"] > 0 and val > 0:
                 h["work_queue"] += (val / h["max_cap"])
                 
@@ -231,6 +247,13 @@ if __name__ == "__main__":
         if is_vpp_active:
             error = AVERAGE_SETPOINT_KW - previous_average_power_kw
             integral_error += error
+
+            # --- ANTI-WINDUP CLAMPING ---
+            # Prevent the integral from building up a massive "memory" when error stays positive or negative for hours
+            MAX_INTEGRAL = 0.1
+            MIN_INTEGRAL = -0.5
+            integral_error = max(min(integral_error, MAX_INTEGRAL), MIN_INTEGRAL)
+
             derivative_error = error - previous_error
             previous_error = error
             
@@ -283,11 +306,15 @@ if __name__ == "__main__":
                 h["work_queue"] = 0.0
                 
             val_kw = dispense * h["max_cap"]
-            h["new_vals"][idx] = val_kw 
+            h["new_vals"][csv_idx] = val_kw
 
+            # For the baseline extraction, you still need an index that starts at 0 
+            # since df_base_out only contains the 2 simulation days
+            sim_idx = list(sim_times).index(current_time) 
+            
             # Calculate True Whole-Home Power for PID feedback
-            base_total_kw = h["df_base_out"]['Total Electric Power (kW)'].iloc[idx]
-            base_dryer_kw = h["df_base_out"].get('Clothes Dryer Electric Power (kW)', pd.Series([0]*len(sim_times))).iloc[idx]
+            base_total_kw = h["df_base_out"]['Total Electric Power (kW)'].iloc[sim_idx]
+            base_dryer_kw = h["df_base_out"].get('Clothes Dryer Electric Power (kW)', pd.Series([0]*len(sim_times))).iloc[sim_idx]
             
             estimated_ctrl_total = (base_total_kw - base_dryer_kw) + val_kw
             current_step_aggregate += estimated_ctrl_total
