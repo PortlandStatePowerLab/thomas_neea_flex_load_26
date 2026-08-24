@@ -19,7 +19,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'HPWH_Test_Loadshape_9'
+filename = 'HPWH_Test_Loadshape_10'
 Input_folder = "HPWH All Input Files 2"
 
 # Original OCHRE defaults folder
@@ -44,7 +44,7 @@ t_res = 15  # minutes
 
 # --- GLOBAL VPP EVENT SETTINGS ---
 # Define the time window for active load shaping
-VPP_START_TIME = dt.time(12, 0)
+VPP_START_TIME = dt.time(14, 0)
 VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
