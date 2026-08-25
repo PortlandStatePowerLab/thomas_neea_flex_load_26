@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 import re
 import random 
+import pandas as pd
 
 # ---------------------------------------------------------
 # DIRECTORY SETUP
@@ -22,13 +23,17 @@ WORKING_DIR = FL_DIR.parent
 INPUT_DIR = WORKING_DIR / "Almost All Portland Input Files"
 OUTPUT_DIR = WORKING_DIR / "Combo All Portland Input Files"
 
+METADATA_DIR = WORKING_DIR / "Metadata" / "OR_upgrade0.csv"
+# Load metadata once globally
+metadata_df = pd.read_csv(METADATA_DIR, low_memory=False)
+
 DEVICES = {
     "device_conversion": {
-        "HPWH": "OFF",
+        "HPWH": "ON",
         "ERWH": "OFF",
         "HVAC": "ON",
-        "Dryer": "OFF", 
-        "EV": "OFF"
+        "Dryer": "ON", 
+        "EV": "ON"
     }
 
 }
@@ -51,6 +56,8 @@ ERWH_MODEL_CONFIG = {
     ]
 }
 
+# ASHP - air-to-air - single stage
+# MSHP - mini-split - variable speed
 HVAC_MODEL_CONFIG = {
     "HVAC_model": [
         {"Type": "ASHP", "HeatPumpType": "air-to-air", "CompressorType": "single stage", "Capacity": 36000.0, 
@@ -58,6 +65,18 @@ HVAC_MODEL_CONFIG = {
     ]
 }
 
+DRYER_MODEL_CONFIG = {
+    "Dryer_model": [
+        {"CombinedEnergyFactor": "2.9", "PowerRating": "15000"}
+    ]
+
+}
+
+EV_MODEL_CONFIG = {
+    "EV_model": [
+        {"ChargingLevel":"Level1", "ChargingPower":"9500"}
+    ]
+}
 
 # ---------------------------------------------------------
 # CONFIGURATIONS
@@ -129,6 +148,181 @@ HVAC_CONVERSION_CONFIG = {
         ]
     }
 }
+
+DRYER_CONVERSION_CONFIG = {
+    "AdoptionRate": 1, # % chance of updating or adding a dryer
+    "ClothesDryer": {
+        "IsSharedAppliance": "false",
+        "Location": "conditioned space",
+        "FuelType": "electricity",
+        "CombinedEnergyFactor": DRYER_MODEL_CONFIG["Dryer_model"][0]["CombinedEnergyFactor"],
+        "Vented": "true",
+        "VentedFlowRate": "100.0",
+        "extension": {
+            "UsageMultiplier": "1.0",
+            "WeekdayScheduleFractions": "0.010, 0.006, 0.004, 0.002, 0.004, 0.006, 0.016, 0.032, 0.048, 0.068, 0.078, 0.081, 0.074, 0.067, 0.058, 0.061, 0.055, 0.054, 0.051, 0.051, 0.052, 0.054, 0.044, 0.024",
+            "WeekendScheduleFractions": "0.010, 0.006, 0.004, 0.002, 0.004, 0.006, 0.016, 0.032, 0.048, 0.068, 0.078, 0.081, 0.074, 0.067, 0.058, 0.061, 0.055, 0.054, 0.051, 0.051, 0.052, 0.054, 0.044, 0.024",
+            "MonthlyScheduleMultipliers": "1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0"
+        }
+    },
+    "ServiceFeeder": {
+        "LoadType": "clothes dryer",
+        "PowerRating": DRYER_MODEL_CONFIG["Dryer_model"][0]["PowerRating"],
+        "IsNewLoad": "false"
+    },
+    "BranchCircuit": {
+        "Voltage": "240",
+        "OccupiedSpaces": "2.0"
+    }
+}
+
+
+if EV_MODEL_CONFIG["EV_model"][0]["ChargingLevel"] == "Level1":
+    EV_rates = {
+        "Level1": 1.0,
+        "Level2": 0,
+        "None": 0
+    }
+    EV_max_current = int(EV_MODEL_CONFIG["EV_model"][0]["ChargingPower"])/120
+elif EV_MODEL_CONFIG["EV_model"][0]["ChargingLevel"] == "Level2":
+    EV_rates = {
+        "Level1": 0,
+        "Level2": 1.0,
+        "None": 0
+    }
+    EV_max_current = int(EV_MODEL_CONFIG["EV_model"][0]["ChargingPower"])/240
+else:
+    EV_rates = {}
+    EV_max_current = 100.0
+
+EV_CONVERSION_CONFIG = {
+    # Distribution of charger levels.
+    "ChargerAdoptionRates": EV_rates,
+    
+    # Details for the Service Feeders and Branch Circuits for EV chargers
+    "ChargerDetails": {
+        "1": {
+            "ChargingPower": EV_MODEL_CONFIG["EV_model"][0]["ChargingPower"],
+            "Voltage": "120",
+            "MaxCurrentRating": str(EV_max_current),
+            "OccupiedSpaces": "1.0",
+        },
+        "2": {
+            "ChargingPower": EV_MODEL_CONFIG["EV_model"][0]["ChargingPower"],
+            "Voltage": "240",
+            "MaxCurrentRating": str(EV_max_current),
+            "OccupiedSpaces": "2.0",
+        }
+    },
+
+    # Predefined Vehicle Types Specs, Vehicle Type Listed in Metadata
+    "VehicleSpecs": {
+        "SUV, Battery Electric Vehicle, 200 mile range": {
+            "NominalCapacity": "66.88", "UsableCapacity": "53.503", "FuelEconomy": "0.267513"
+        },
+        "Pickup, Battery Electric Vehicle, 300 mile range": {
+            "NominalCapacity": "132.43", "UsableCapacity": "105.946", "FuelEconomy": "0.373794"
+        },
+        "SUV, Battery Electric Vehicle, 300 mile range": {
+            "NominalCapacity": "104.6", "UsableCapacity": "83.68", "FuelEconomy": "0.278934"
+        },
+        "Compact, Battery Electric Vehicle, 300 mile range": {
+            "NominalCapacity": "79.29", "UsableCapacity": "63.433", "FuelEconomy": "0.22002"
+        },
+        "Midsize, Battery Electric Vehicle, 300 mile range": {
+            "NominalCapacity": "81.8", "UsableCapacity": "65.441", "FuelEconomy": "0.229449"
+        },
+        "Compact, Battery Electric Vehicle, 200 mile range": {
+            "NominalCapacity": "50.21", "UsableCapacity": "40.168", "FuelEconomy": "0.209901"
+        },
+        "Midsize, Battery Electric Vehicle, 200 mile range": {
+            "NominalCapacity": "52.47", "UsableCapacity": "41.978", "FuelEconomy": "0.219174"
+        }
+    }
+}
+
+# ---------------------------------------------------------
+# XML SCHEME ORDERS (USED FOR EV CODE)
+# ---------------------------------------------------------
+
+SYSTEMS_ORDER = [
+    "SystemIdentifier",
+    "HVAC",
+    "MechanicalVentilation",
+    "CombustionVentilation",
+    "WaterHeating",
+    "SolarThermal",
+    "Photovoltaics",
+    "ElectricPanels",
+    "ElectricalLoadCenter",
+    "Batteries",
+    "Vehicles",
+    "ElectricVehicleChargers",
+    "Generators",
+    "Pools",
+    "PermanentSpas",
+    "HotTubs",
+    "PlugLoads",
+    "FuelLoads"
+]
+
+ELEC_ORDER = [
+    "SystemIdentifier",
+    "Voltage",
+    "MaximumCurrentRating",
+    "Capacity",
+    "OccupiedSpaces",
+    "TotalSpaces",
+    "BranchCircuits",
+    "BranchCircuit",
+    "ServiceFeeders",
+    "ServiceFeeder"
+]
+
+# ---------------------------------------------------------
+# EV SPECIFIC HELPER FUNCTIONS
+# ---------------------------------------------------------
+
+def sort_hpxml_node(node, order_list):
+    """Sorts the children of an XML node based on a standardized schema order."""
+    if node is None:
+        return
+    
+    def get_order(child):
+        tag_name = child.tag.split('}')[-1]
+        try:
+            return order_list.index(tag_name)
+        except ValueError:
+            return len(order_list) # Unknown tags go to the end
+            
+    # Re-order the elements internally
+    node[:] = sorted(node, key=get_order)
+
+def parse_charge_fraction(val):
+    if pd.isna(val): return 0.9
+    val = str(val).lower()
+    if '100' in val: return 1.0
+    if '80-99' in val: return 0.9
+    if '60-79' in val: return 0.7
+    if '40-59' in val: return 0.5
+    if '20-39' in val: return 0.3
+    if '0-19' in val: return 0.1
+    return 0.9 # Default fallback
+
+def get_building_metadata(bldg_id):
+    try:
+        row = metadata_df[metadata_df['bldg_id'] == int(bldg_id)]
+    except KeyError:
+        print(f"[Warning] Bldg {bldg_id}: 'bldg_id' column not found in metadata CSV!")
+        return None
+    except ValueError:
+        print(f"[Warning] Bldg {bldg_id}: Could not convert building ID to an integer.")
+        return None
+        
+    if row.empty:
+        print(f"[Warning] Bldg {bldg_id}: No matching row found in metadata CSV.")
+        return None
+    return row.iloc[0]
 
 
 # ---------------------------------------------------------
@@ -444,6 +638,364 @@ def convert_HVAC(root, config):
         ET.SubElement(ext, f'{ns}HeatingAirflowCFM').text = str(conv["HeatingAirflowCFM"])
         ET.SubElement(ext, f'{ns}CoolingAirflowCFM').text = str(conv["CoolingAirflowCFM"])
 
+
+def convert_dryer(root, config):
+    """Converts or adds a Clothes Dryer to be an electric dryer based on adoption rate."""
+    if random.random() > config["AdoptionRate"]:
+        return  # Roll failed; skip conversion
+
+    ns_match = re.match(r'\{.*\}', root.tag)
+    ns = ns_match.group(0) if ns_match else ''
+    
+    dryer_config = config["ClothesDryer"]
+    feeder_config = config["ServiceFeeder"]
+    branch_config = config.get("BranchCircuit", {})
+
+    # Generate a parent map globally to accurately place nodes
+    parent_map = {c: p for p in root.iter() for c in p}
+
+    # --- 1. HANDLE DRYER ELEMENT ---
+    dryer = root.find(f'.//{ns}ClothesDryer')
+    dryer_id = 'ClothesDryer1'
+
+    if dryer is not None:
+        # Dryer exists, update its ID if needed and check fuel type
+        sys_id_elem = dryer.find(f'{ns}SystemIdentifier')
+        if sys_id_elem is not None:
+            dryer_id = sys_id_elem.get('id', 'ClothesDryer1')
+            
+        fuel_elem = dryer.find(f'{ns}FuelType')
+        if fuel_elem is None or fuel_elem.text != 'electricity':
+            # Update to Electric
+            if fuel_elem is not None:
+                fuel_elem.text = 'electricity'
+            else:
+                ET.SubElement(dryer, f'{ns}FuelType').text = 'electricity'
+            
+            # Update CEF
+            cef_elem = dryer.find(f'{ns}CombinedEnergyFactor')
+            if cef_elem is not None:
+                cef_elem.text = dryer_config["CombinedEnergyFactor"]
+            else:
+                ET.SubElement(dryer, f'{ns}CombinedEnergyFactor').text = dryer_config["CombinedEnergyFactor"]
+                
+            # Update Extension Usage Multiplier
+            ext = dryer.find(f'{ns}extension')
+            if ext is None:
+                ext = ET.SubElement(dryer, f'{ns}extension')
+                
+            um = ext.find(f'{ns}UsageMultiplier')
+            if um is not None:
+                um.text = dryer_config["extension"]["UsageMultiplier"]
+            else:
+                ET.SubElement(ext, f'{ns}UsageMultiplier').text = dryer_config["extension"]["UsageMultiplier"]
+    else:
+        # Dryer does not exist, add it to Appliances node
+        appliances = root.find(f'.//{ns}Appliances')
+        if appliances is not None:
+            dryer = ET.SubElement(appliances, f'{ns}ClothesDryer')
+            ET.SubElement(dryer, f'{ns}SystemIdentifier', id=dryer_id)
+            ET.SubElement(dryer, f'{ns}IsSharedAppliance').text = dryer_config["IsSharedAppliance"]
+            ET.SubElement(dryer, f'{ns}Location').text = dryer_config["Location"]
+            ET.SubElement(dryer, f'{ns}FuelType').text = dryer_config["FuelType"]
+            ET.SubElement(dryer, f'{ns}CombinedEnergyFactor').text = dryer_config["CombinedEnergyFactor"]
+            ET.SubElement(dryer, f'{ns}Vented').text = dryer_config["Vented"]
+            ET.SubElement(dryer, f'{ns}VentedFlowRate').text = dryer_config["VentedFlowRate"]
+            
+            ext = ET.SubElement(dryer, f'{ns}extension')
+            ET.SubElement(ext, f'{ns}UsageMultiplier').text = dryer_config["extension"]["UsageMultiplier"]
+            ET.SubElement(ext, f'{ns}WeekdayScheduleFractions').text = dryer_config["extension"]["WeekdayScheduleFractions"]
+            ET.SubElement(ext, f'{ns}WeekendScheduleFractions').text = dryer_config["extension"]["WeekendScheduleFractions"]
+            ET.SubElement(ext, f'{ns}MonthlyScheduleMultipliers').text = dryer_config["extension"]["MonthlyScheduleMultipliers"]
+
+    # --- 2. HANDLE SERVICE FEEDER ---
+    all_feeders = root.findall(f'.//{ns}ServiceFeeder')
+    max_feeder_num = 0
+    feeder_exists = False
+    feeder_parent = None
+
+    for f in all_feeders:
+        # Locate the highest existing ServiceFeeder ID number
+        sys_id = f.find(f'{ns}SystemIdentifier')
+        if sys_id is not None:
+            fid = sys_id.get('id', '')
+            match = re.search(r'\d+', fid)
+            if match:
+                max_feeder_num = max(max_feeder_num, int(match.group()))
+        
+        # Check if this feeder is already attached to our dryer
+        attached = f.find(f'{ns}AttachedToComponent')
+        if attached is not None and attached.get('idref') == dryer_id:
+            feeder_exists = True
+
+        if feeder_parent is None:
+            feeder_parent = parent_map.get(f)
+
+    # Add the new service feeder if one does not exist for the dryer
+    if not feeder_exists:
+        if feeder_parent is None:
+            # Fallback if there are completely zero ServiceFeeders in the document
+            feeder_parent = root.find(f'.//{ns}ElectricalLoadCenter')
+            
+        if feeder_parent is not None:
+            new_feeder = ET.SubElement(feeder_parent, f'{ns}ServiceFeeder')
+            ET.SubElement(new_feeder, f'{ns}SystemIdentifier', id=f'ServiceFeeder{max_feeder_num + 1}')
+            ET.SubElement(new_feeder, f'{ns}LoadType').text = feeder_config["LoadType"]
+            ET.SubElement(new_feeder, f'{ns}PowerRating').text = feeder_config["PowerRating"]
+            ET.SubElement(new_feeder, f'{ns}IsNewLoad').text = feeder_config["IsNewLoad"]
+            ET.SubElement(new_feeder, f'{ns}AttachedToComponent', idref=dryer_id)
+
+    # --- 3. HANDLE BRANCH CIRCUIT ---
+    if branch_config:
+        all_circuits = root.findall(f'.//{ns}BranchCircuit')
+        max_circuit_num = 0
+        circuit_exists = False
+        circuit_parent = None
+
+        for c in all_circuits:
+            sys_id = c.find(f'{ns}SystemIdentifier')
+            if sys_id is not None:
+                cid = sys_id.get('id', '')
+                match = re.search(r'\d+', cid)
+                if match:
+                    max_circuit_num = max(max_circuit_num, int(match.group()))
+            
+            # Check if this circuit is already attached to our dryer
+            attached = c.find(f'{ns}AttachedToComponent')
+            if attached is not None and attached.get('idref') == dryer_id:
+                circuit_exists = True
+
+            if circuit_parent is None:
+                circuit_parent = parent_map.get(c)
+
+        if not circuit_exists:
+            if circuit_parent is None:
+                circuit_parent = root.find(f'.//{ns}ElectricalLoadCenter')
+                
+            if circuit_parent is not None:
+                new_circuit = ET.SubElement(circuit_parent, f'{ns}BranchCircuit')
+                ET.SubElement(new_circuit, f'{ns}SystemIdentifier', id=f'BranchCircuit{max_circuit_num + 1}')
+                
+                # Derive maximum current rating dynamically (Amps = Watts / Volts)
+                power = float(feeder_config["PowerRating"])
+                voltage = float(branch_config["Voltage"])
+                max_current = str(power / voltage)
+
+                ET.SubElement(new_circuit, f'{ns}Voltage').text = branch_config["Voltage"]
+                ET.SubElement(new_circuit, f'{ns}MaximumCurrentRating').text = max_current
+                ET.SubElement(new_circuit, f'{ns}OccupiedSpaces').text = branch_config["OccupiedSpaces"]
+                ET.SubElement(new_circuit, f'{ns}AttachedToComponent', idref=dryer_id)
+
+
+def add_ev_components(root, ns, ns_bracket, bldg_id, config):
+    meta = get_building_metadata(bldg_id)
+    if meta is None:
+        # print(f"[Warning] Bldg {bldg_id}: Metadata row check failed. Skipping.")
+        return
+    
+    # 1. Determine Charger Level
+    rand_val = random.random()
+    rates = config["ChargerAdoptionRates"]
+    if rand_val < rates["Level1"]:
+        charger_level = "1"
+    elif rand_val < rates["Level1"] + rates["Level2"]:
+        charger_level = "2"
+    else:
+        # print(f"[Info] Bldg {bldg_id}: No charger chosen based on adoption rates (Rolled {rand_val:.3f}). Skipping.")
+        return # No charger chosen
+
+    charger_config = config["ChargerDetails"][charger_level]
+    
+    # Extract Metadata
+    veh_type = meta.get('in.electric_vehicle_battery', None)
+    
+    # Clean string to avoid silent mismatches due to hidden spaces in CSV
+    if isinstance(veh_type, str):
+        veh_type = veh_type.strip()
+        
+    miles_yr = meta.get('in.electric_vehicle_miles_traveled', 11000.0)
+    charge_loc = meta.get('in.electric_vehicle_charge_at_home', '80-99%')
+    
+    # Print exactly what is triggering the skip if the vehicle type doesn't match
+    if pd.isna(veh_type):
+        print(f"[Warning] Bldg {bldg_id}: 'in.electric_vehicle_battery' is missing or NaN in CSV. Skipping.")
+        return
+    if veh_type not in config["VehicleSpecs"]:
+        print(f"[Warning] Bldg {bldg_id}: veh_type '{veh_type}' not found in VehicleSpecs config dictionary. Skipping.")
+        return
+    
+    veh_specs = config["VehicleSpecs"][veh_type]
+    charge_frac = parse_charge_fraction(charge_loc)
+    
+    # Average driving speed is 22mph (derived from matching hours to miles from sample data)
+    hours_week = float(miles_yr) / 365.0 * 7.0 / 22.0
+
+    # --- 2. Find Correct Parent Node (Systems) ---
+    # HPXML standard places EV elements inside <Systems>
+    parent_node = root.find(f'.//{ns}Systems')
+    
+    # Fallback to BuildingDetails if Systems somehow doesn't exist
+    if parent_node is None:
+        parent_node = root.find(f'.//{ns}BuildingDetails')
+        # print(f"[Info] Bldg {bldg_id}: <Systems> not found, falling back to <BuildingDetails>.")
+        
+    if parent_node is None:
+        # print(f"[Warning] Bldg {bldg_id}: Neither <Systems> nor <BuildingDetails> found. Skipping.")
+        return
+
+    # --- 3. Create or Locate Elements Independently ---
+    vehicles_node = root.find(f'.//{ns}Vehicles')
+    if vehicles_node is None:
+        # print(f"[Info] Bldg {bldg_id}: Creating new <Vehicles> node.")
+        vehicles_node = ET.Element(f'{ns}Vehicles')
+    else:
+        # print(f"[Info] Bldg {bldg_id}: Existing <Vehicles> node found. Overwriting contents.")
+        for child in list(vehicles_node):
+            vehicles_node.remove(child)
+
+    chargers_node = root.find(f'.//{ns}ElectricVehicleChargers')
+    charger_id = 'EVCharger1'
+    if chargers_node is None:
+        # print(f"[Info] Bldg {bldg_id}: Creating new <ElectricVehicleChargers> node.")
+        chargers_node = ET.Element(f'{ns}ElectricVehicleChargers')
+    else:
+        # print(f"[Info] Bldg {bldg_id}: Existing <ElectricVehicleChargers> node found. Overwriting contents.")
+        for child in list(chargers_node):
+            chargers_node.remove(child)
+
+    # --- 4. Build Charger Properties ---
+    charger_elem = ET.SubElement(chargers_node, f'{ns}ElectricVehicleCharger')
+    ET.SubElement(charger_elem, f'{ns}SystemIdentifier', id=charger_id)
+    ET.SubElement(charger_elem, f'{ns}ChargingLevel').text = charger_level
+    ET.SubElement(charger_elem, f'{ns}ChargingPower').text = charger_config["ChargingPower"]
+
+    # --- 5. Build Vehicle Properties ---
+    veh_elem = ET.SubElement(vehicles_node, f'{ns}Vehicle')
+    ET.SubElement(veh_elem, f'{ns}SystemIdentifier', id='Vehicle1')
+    
+    veh_type_elem = ET.SubElement(veh_elem, f'{ns}VehicleType')
+    bev = ET.SubElement(veh_type_elem, f'{ns}BatteryElectricVehicle')
+    
+    batt = ET.SubElement(bev, f'{ns}Battery')
+    ET.SubElement(batt, f'{ns}BatteryType').text = 'Li-ion'
+    
+    nom = ET.SubElement(batt, f'{ns}NominalCapacity')
+    ET.SubElement(nom, f'{ns}Units').text = 'kWh'
+    ET.SubElement(nom, f'{ns}Value').text = veh_specs["NominalCapacity"]
+    
+    usable = ET.SubElement(batt, f'{ns}UsableCapacity')
+    ET.SubElement(usable, f'{ns}Units').text = 'kWh'
+    ET.SubElement(usable, f'{ns}Value').text = veh_specs["UsableCapacity"]
+    
+    ET.SubElement(batt, f'{ns}NominalVoltage').text = '50.0'
+    
+    fcl = ET.SubElement(bev, f'{ns}FractionChargedLocation')
+    ET.SubElement(fcl, f'{ns}Location').text = 'Home'
+    ET.SubElement(fcl, f'{ns}Percentage').text = str(charge_frac)
+    
+    ET.SubElement(bev, f'{ns}ConnectedCharger', idref=charger_id)
+    
+    ext = ET.SubElement(bev, f'{ns}extension')
+    ET.SubElement(ext, f'{ns}WeekdayScheduleFractions').text = "0.0714, 0.0714, 0.0714, 0.0714, 0.0714, 0.0714, 0.0714, -0.3535, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3221, -0.3244, 0.0714, 0.0714, 0.0714, 0.0714, 0.0714, 0.0714, 0.0714"
+    ET.SubElement(ext, f'{ns}WeekendScheduleFractions').text = "0.0588, 0.0588, 0.0588, 0.0588, 0.0588, 0.0588, 0.0588, 0.0588, 0.0588, -0.3334, 0, 0, 0, 0, -0.3293, -0.3372, 0.0588, 0.0588, 0.0588, 0.0588, 0.0588, 0.0588, 0.0588, 0.0588"
+    ET.SubElement(ext, f'{ns}MonthlyScheduleMultipliers').text = "1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0"
+    
+    ET.SubElement(veh_elem, f'{ns}MilesDrivenPerYear').text = str(miles_yr)
+    ET.SubElement(veh_elem, f'{ns}HoursDrivenPerWeek').text = str(hours_week)
+    
+    fec = ET.SubElement(veh_elem, f'{ns}FuelEconomyCombined')
+    ET.SubElement(fec, f'{ns}Units').text = 'kWh/mile'
+    ET.SubElement(fec, f'{ns}Value').text = veh_specs["FuelEconomy"]
+
+    # --- 6. Append & Enforce Schema Order on Systems Node ---
+    if vehicles_node not in list(parent_node):
+        parent_node.append(vehicles_node)
+        # print(f"[Info] Bldg {bldg_id}: Appended <Vehicles> to parent.")
+    if chargers_node not in list(parent_node):
+        parent_node.append(chargers_node)
+        # print(f"[Info] Bldg {bldg_id}: Appended <ElectricVehicleChargers> to parent.")
+        
+    sort_hpxml_node(parent_node, SYSTEMS_ORDER)
+
+    # --- 7. Service Feeder & Branch Circuit ---
+    circuit_parent = root.find(f'.//{ns}ElectricalLoadCenter')
+    
+    # Fallback for newer HPXML versions utilizing ElectricPanels
+    if circuit_parent is None:
+        circuit_parent = root.find(f'.//{ns}ElectricPanel')
+        if circuit_parent is not None:
+            # print(f"[Info] Bldg {bldg_id}: <ElectricalLoadCenter> missing. Falling back to <ElectricPanel>.")
+            return
+    
+    if circuit_parent is not None:
+        # Determine targets (some HPXML versions use wrapper nodes, some don't)
+        branch_wrapper = circuit_parent.find(f'{ns}BranchCircuits')
+        circuit_target = branch_wrapper if branch_wrapper is not None else circuit_parent
+        
+        feeder_wrapper = circuit_parent.find(f'{ns}ServiceFeeders')
+        feeder_target = feeder_wrapper if feeder_wrapper is not None else circuit_parent
+
+        all_circuits = root.findall(f'.//{ns}BranchCircuit')
+        max_c_num = max([int(re.search(r'\d+', c.find(f'{ns}SystemIdentifier').get('id', '0')).group()) for c in all_circuits if c.find(f'{ns}SystemIdentifier') is not None] + [0])
+        circuit_exists = any(c.find(f'{ns}AttachedToComponent') is not None and c.find(f'{ns}AttachedToComponent').get('idref') == charger_id for c in all_circuits)
+        
+        # Insert Branch Circuit first to respect schema load center sequence
+        if not circuit_exists:
+            new_circuit = ET.SubElement(circuit_target, f'{ns}BranchCircuit')
+            ET.SubElement(new_circuit, f'{ns}SystemIdentifier', id=f'BranchCircuit{max_c_num + 1}')
+            ET.SubElement(new_circuit, f'{ns}Voltage').text = charger_config["Voltage"]
+            ET.SubElement(new_circuit, f'{ns}MaximumCurrentRating').text = charger_config["MaxCurrentRating"]
+            ET.SubElement(new_circuit, f'{ns}OccupiedSpaces').text = charger_config["OccupiedSpaces"]
+            ET.SubElement(new_circuit, f'{ns}AttachedToComponent', idref=charger_id)
+            # print(f"[Info] Bldg {bldg_id}: Added new BranchCircuit.")
+        else:
+            # print(f"[Info] Bldg {bldg_id}: BranchCircuit already exists for {charger_id}.")
+            return
+
+
+        all_feeders = root.findall(f'.//{ns}ServiceFeeder')
+        max_f_num = max([int(re.search(r'\d+', f.find(f'{ns}SystemIdentifier').get('id', '0')).group()) for f in all_feeders if f.find(f'{ns}SystemIdentifier') is not None] + [0])
+        feeder_exists = any(f.find(f'{ns}AttachedToComponent') is not None and f.find(f'{ns}AttachedToComponent').get('idref') == charger_id for f in all_feeders)
+        
+        if not feeder_exists:
+            new_feeder = ET.SubElement(feeder_target, f'{ns}ServiceFeeder')
+            ET.SubElement(new_feeder, f'{ns}SystemIdentifier', id=f'ServiceFeeder{max_f_num + 1}')
+            ET.SubElement(new_feeder, f'{ns}LoadType').text = 'electric vehicle charging'
+            ET.SubElement(new_feeder, f'{ns}PowerRating').text = charger_config["ChargingPower"]
+            ET.SubElement(new_feeder, f'{ns}IsNewLoad').text = "false"
+            ET.SubElement(new_feeder, f'{ns}AttachedToComponent', idref=charger_id)
+            # print(f"[Info] Bldg {bldg_id}: Added new ServiceFeeder.")
+        else:
+            # print(f"[Info] Bldg {bldg_id}: ServiceFeeder already exists for {charger_id}.")
+            return
+
+        # Enforce exact XML child sequence on the Electric Panel/Load Center 
+        sort_hpxml_node(circuit_parent, ELEC_ORDER)
+    else:
+        # print(f"[Warning] Bldg {bldg_id}: No <ElectricalLoadCenter> or <ElectricPanel> found! Cannot attach BranchCircuit or ServiceFeeder.")
+        return
+        
+    # print(f"[Success] Bldg {bldg_id}: Successfully processed EV components.")
+
+def convert_ev(root, xml_filename, config):
+    """Parses bldg_id from the parent folder name and routes to ev component adder"""
+    ns_match = re.match(r'\{.*\}', root.tag)
+    ns_bracket = ns_match.group(0) if ns_match else ''
+    
+    # Extract the name of the folder containing home.xml (e.g., 'bldg0000062-up00')
+    parent_folder_name = xml_filename.parent.name
+    
+    # Search for the building ID in the folder name
+    match = re.search(r'\d+', parent_folder_name)
+    
+    if match:
+        bldg_id = match.group()
+        # print(f"\n--- Processing {parent_folder_name}/{xml_filename.name} (Extracted ID: {int(bldg_id)}) ---")
+        add_ev_components(root, ns_bracket, ns_bracket, bldg_id, config)
+    else:
+        print(f"[Warning] Could not extract numeric bldg_id from path: {xml_filename}")
+
+
 # ---------------------------------------------------------
 # DUPLICATION LOGIC
 # ---------------------------------------------------------
@@ -498,6 +1050,13 @@ if __name__ == "__main__":
 
                 if DEVICES["device_conversion"]["HVAC"] == "ON":
                     convert_HVAC(root, HVAC_CONVERSION_CONFIG)
+
+                if DEVICES["device_conversion"]["Dryer"] == "ON":
+                    convert_dryer(root, DRYER_CONVERSION_CONFIG)
+
+                if DEVICES["device_conversion"]["EV"] == "ON":
+                    convert_ev(root, xml_file, EV_CONVERSION_CONFIG)
+
                 
                 # ==========================================
                 
