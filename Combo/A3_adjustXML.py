@@ -670,14 +670,7 @@ def convert_dryer(root, config):
             if fuel_elem is not None:
                 fuel_elem.text = 'electricity'
             else:
-                ET.SubElement(dryer, f'{ns}FuelType').text = 'electricity'
-            
-            # Update CEF
-            cef_elem = dryer.find(f'{ns}CombinedEnergyFactor')
-            if cef_elem is not None:
-                cef_elem.text = dryer_config["CombinedEnergyFactor"]
-            else:
-                ET.SubElement(dryer, f'{ns}CombinedEnergyFactor').text = dryer_config["CombinedEnergyFactor"]
+                ET.SubElement(dryer, f'{ns}FuelType').text = 'electricity'            
                 
             # Update Extension Usage Multiplier
             ext = dryer.find(f'{ns}extension')
@@ -689,6 +682,14 @@ def convert_dryer(root, config):
                 um.text = dryer_config["extension"]["UsageMultiplier"]
             else:
                 ET.SubElement(ext, f'{ns}UsageMultiplier').text = dryer_config["extension"]["UsageMultiplier"]
+
+        # Update CEF
+        cef_elem = dryer.find(f'{ns}CombinedEnergyFactor')
+        if cef_elem is not None:
+            cef_elem.text = dryer_config["CombinedEnergyFactor"]
+        else:
+            ET.SubElement(dryer, f'{ns}CombinedEnergyFactor').text = dryer_config["CombinedEnergyFactor"]
+        
     else:
         # Dryer does not exist, add it to Appliances node
         appliances = root.find(f'.//{ns}Appliances')
@@ -727,6 +728,12 @@ def convert_dryer(root, config):
         attached = f.find(f'{ns}AttachedToComponent')
         if attached is not None and attached.get('idref') == dryer_id:
             feeder_exists = True
+            # FIX: Update the existing feeder's PowerRating
+            pr_elem = f.find(f'{ns}PowerRating')
+            if pr_elem is not None:
+                pr_elem.text = feeder_config["PowerRating"]
+            else:
+                ET.SubElement(f, f'{ns}PowerRating').text = feeder_config["PowerRating"]
 
         if feeder_parent is None:
             feeder_parent = parent_map.get(f)
@@ -764,6 +771,20 @@ def convert_dryer(root, config):
             attached = c.find(f'{ns}AttachedToComponent')
             if attached is not None and attached.get('idref') == dryer_id:
                 circuit_exists = True
+                
+                # Calculate and update existing circuit values
+                power = float(feeder_config["PowerRating"])
+                voltage = float(branch_config["Voltage"])
+                max_current = str(power / voltage)
+                
+                for tag, val in [('Voltage', branch_config["Voltage"]), 
+                                 ('MaxCurrentRating', max_current), 
+                                 ('OccupiedSpaces', branch_config["OccupiedSpaces"])]:
+                    elem = c.find(f'{ns}{tag}')
+                    if elem is not None:
+                        elem.text = val
+                    else:
+                        ET.SubElement(c, f'{ns}{tag}').text = val
 
             if circuit_parent is None:
                 circuit_parent = parent_map.get(c)
