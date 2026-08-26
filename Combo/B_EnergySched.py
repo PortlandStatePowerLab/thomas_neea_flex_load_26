@@ -38,7 +38,7 @@ print(DEFAULT_INPUT)
 DEFAULT_WEATHER = ochre_dir / "defaults" / "Weather" / "USA_OR_Portland.Intl.AP.726980_TMY3.epw"
 # G4100510 is Multnomah county weather station, code will complain this is missing but it doesn't work if you actually try to use it
 
-# working folder (writable)
+# working folder
 script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 WORKING_DIR = os.path.dirname(fl_dir)
@@ -76,26 +76,17 @@ count = 0
 
 # Schedule variant
 my_schedule1 = {
-    'M_ALU_time': '06:30',
-    'M_ALU_duration': 0,
-    'M_LU_time': '06:30',
-    'M_LU_duration': 0,
-    'M_S_time': '07:30',
-    'M_S_duration': 0,
-    'M_CP_time': '7:30',
-    'M_CP_duration': 0,
-    'M_GE_time': '7:30',
-    'M_GE_duration': 0,
-    'E_ALU_time': '13:00',
-    'E_ALU_duration': 1,
-    'E_LU_time': '13:00',
-    'E_LU_duration': 0,
-    'E_S_time': '14:00',
-    'E_S_duration': 6,
-    'E_CP_time': '14:00',
-    'E_CP_duration': 0,
-    'E_GE_time': '14:00',
-    'E_GE_duration': 0
+    'M_ALU_start': '06:30', 'M_ALU_end': '06:30',
+    'M_LU_start':  '06:30', 'M_LU_end':  '06:30',
+    'M_S_start':   '07:30', 'M_S_end':   '07:30',
+    'M_CP_start':  '07:30', 'M_CP_end':  '07:30',
+    'M_GE_start':  '07:30', 'M_GE_end':  '07:30',
+
+    'E_ALU_start': '13:00', 'E_ALU_end': '14:00',
+    'E_LU_start':  '13:00', 'E_LU_end':  '13:00',
+    'E_S_start':   '14:00', 'E_S_end':   '20:00',
+    'E_CP_start':  '14:00', 'E_CP_end':  '14:00',
+    'E_GE_start':  '14:00', 'E_GE_end':  '14:00'
 }
 
 ramp_duration = {
@@ -122,6 +113,7 @@ my_schedule = []
 bins = 8
 
 #minutes you will offset schedule
+# LU applies to LU and ALU, S applies to S, CP, GE
 M_LU_in_dt = ramp_duration["M_LU_in"] / bins
 M_LU_out_dt = ramp_duration["M_LU_out"] / bins
 M_S_in_dt = ramp_duration["M_S_in"] / bins
@@ -135,20 +127,53 @@ E_S_out_dt = ramp_duration["E_S_out"] / bins
 # This will change duration time if the in and out ramp durations are different, but if the duration is 0 it will stay 0. 
 # If the load up goes directly into a shed, the load up out and shed in durations should be forced to be the same and working at the same time.
 
+#########################################
+# STAGGER SCHEDULES FOR RAMPING
+#########################################
 
 
-# Generate new schedules with offsets
-for i in range(bins):
-    M_LU_offset = i * M_LU_in_dt  # Calculates offset
-    new_sched = my_schedule1.copy()
+def create_home_schedule(base_sched, ramps, bins, home_idx):
+    """
+    Calculates staggered start/end timedeltas for a specific home.
+    ramp_duration values are in HOURS. 
+    (e.g., 2 hours / 8 bins = 0.25 hours = 15 minute steps)
+    """
+    # Determine which of the 8 bins this home falls into
+    bin_idx = home_idx % bins
+
+    def get_shift(ramp_key):
+        # Default to 0 shift if not defined in ramp_duration
+        ramp_hours = ramps.get(ramp_key, 0)
+        # Shift formula matches your original: i * (ramp / bins)
+        shift_hours = ramp_hours * (bin_idx / bins) if bins > 0 else 0
+        return pd.Timedelta(hours=shift_hours)
+
+    def parse_time(time_str):
+        t = dt.datetime.strptime(time_str, '%H:%M')
+        return pd.Timedelta(hours=t.hour, minutes=t.minute)
+
+    home_schedule = {}
     
-    for key, value in new_sched.items():
-        # Check if the key is a time variable
-        if key.endswith('LU_time') & key.startswith('M') :
-            # Shift the start time
-            new_sched[key] = shift_time(value, M_LU_offset)
-            
-    my_schedule.append(new_sched)
+    # Process all possible signal prefixes
+    prefixes = ['M_ALU', 'M_LU', 'M_S', 'M_CP', 'M_GE', 
+                'E_ALU', 'E_LU', 'E_S', 'E_CP', 'E_GE']
+
+    for prefix in prefixes:
+        start_time_str = base_sched.get(f'{prefix}_time', '00:00')
+        duration_hrs = base_sched.get(f'{prefix}_duration', 0)
+
+        # Baseline boundaries
+        start_td = parse_time(start_time_str)
+        end_td = start_td + pd.Timedelta(hours=duration_hrs)
+
+        # Apply the stagger shifts to the boundaries
+        # the boundary where LU ends and S begins will shift exactly the same amount if they are equal
+        start_td += get_shift(f'{prefix}_in')
+        end_td += get_shift(f'{prefix}_out')
+
+        home_schedule[prefix] = (start_td, end_td)
+
+    return home_schedule
 
 #########################################
 # TEMPERATURE CONVERSIONS F to C
@@ -177,10 +202,10 @@ WH_TdeadbandC = f_to_c_DB(WH_TdeadbandF)
 WH_TinitC = f_to_c(WH_Tinit)
 
 #########################################
-# HPWH CONTROL FUNCTION
+# CONTROL FUNCTION
 #########################################
 
-def determine_hpwh_control(sim_time, current_temp_c, sched_cfg, **kwargs):
+def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
     ctrl_signal = {
         'Water Heating': {
             'Setpoint': WH_TbaselineC,
@@ -189,60 +214,29 @@ def determine_hpwh_control(sim_time, current_temp_c, sched_cfg, **kwargs):
         }
     }
 
-    base_date = sim_time.date()
-    def get_time_range(key_prefix):
-        start = pd.to_datetime(f"{base_date} {sched_cfg[f'{key_prefix}_time']}")
-        end = start + pd.Timedelta(hours=sched_cfg[f'{key_prefix}_duration'])
-        return start, end
+    midnight = pd.to_datetime(sim_time.date())
 
-    ranges = {
-        'M_ALU': get_time_range('M_ALU'),
-        'M_LU': get_time_range('M_LU'),
-        'M_S': get_time_range('M_S'),
-        'M_CP': get_time_range('M_CP'),
-        'M_GE': get_time_range('M_GE'),
-        'E_ALU': get_time_range('E_ALU'),
-        'E_LU': get_time_range('E_LU'),
-        'E_S': get_time_range('E_S'),
-        'E_CP': get_time_range('E_CP'),
-        'E_GE': get_time_range('E_GE')
-    }
+    # Define modes in priority order (first match wins)
+    modes = [
+        ('ALU', WH_Tcontrol_ALUC, WH_Tcontrol_ALUdeadbandC),
+        ('LU',  WH_Tcontrol_LOADC, WH_Tcontrol_LOADdeadbandC),
+        ('S',   WH_Tcontrol_SHEDC, WH_Tcontrol_deadbandC),
+        ('CP',  WH_Tcontrol_CPC, WH_Tcontrol_CPdeadbandC),
+        ('GE',  WH_Tcontrol_GEC, WH_Tcontrol_GEdeadbandC)
+    ]
 
-    # ADVANCED LOAD UP
-    if ranges['M_ALU'][0] <= sim_time < ranges['M_ALU'][1] or ranges['E_ALU'][0] <= sim_time < ranges['E_ALU'][1]:
-        ctrl_signal['Water Heating'].update({
-            'Setpoint': WH_Tcontrol_ALUC,
-            'Deadband': WH_Tcontrol_ALUdeadbandC
-        })
+    for mode_name, sp, db in modes:
+        # Check Morning
+        m_start, m_end = home_schedule_td[f'M_{mode_name}']
+        if (midnight + m_start) <= sim_time < (midnight + m_end):
+            ctrl_signal['Water Heating'].update({'Setpoint': sp, 'Deadband': db})
+            return ctrl_signal
 
-    # LOAD UP
-    if ranges['M_LU'][0] <= sim_time < ranges['M_LU'][1] or ranges['E_LU'][0] <= sim_time < ranges['E_LU'][1]:
-        ctrl_signal['Water Heating'].update({
-            'Setpoint': WH_Tcontrol_LOADC,
-            'Deadband': WH_Tcontrol_LOADdeadbandC
-        })
-
-
-    # SHED
-    elif ranges['M_S'][0] <= sim_time < ranges['M_S'][1] or ranges['E_S'][0] <= sim_time < ranges['E_S'][1]:
-        ctrl_signal['Water Heating'].update({
-            'Setpoint': WH_Tcontrol_SHEDC,
-            'Deadband': WH_Tcontrol_deadbandC
-        })
-
-    # CRITICAL PEAK
-    elif ranges['M_CP'][0] <= sim_time < ranges['M_CP'][1] or ranges['E_CP'][0] <= sim_time < ranges['E_CP'][1]:
-        ctrl_signal['Water Heating'].update({
-            'Setpoint': WH_Tcontrol_CPC,
-            'Deadband': WH_Tcontrol_CPdeadbandC
-        })
-
-    # GRID EMERGENCY
-    elif ranges['M_GE'][0] <= sim_time < ranges['M_GE'][1] or ranges['E_GE'][0] <= sim_time < ranges['E_GE'][1]:
-        ctrl_signal['Water Heating'].update({
-            'Setpoint': WH_Tcontrol_GEC,
-            'Deadband': WH_Tcontrol_GEdeadbandC
-        })
+        # Check Evening
+        e_start, e_end = home_schedule_td[f'E_{mode_name}']
+        if (midnight + e_start) <= sim_time < (midnight + e_end):
+            ctrl_signal['Water Heating'].update({'Setpoint': sp, 'Deadband': db})
+            return ctrl_signal
 
     return ctrl_signal
 
@@ -310,7 +304,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     hpwh_unit = sim_dwelling.get_equipment_by_end_use('Water Heating')
     for sim_time in sim_dwelling.sim_times:
         current_setpt = hpwh_unit.schedule.loc[sim_time, 'Water Heating Setpoint (C)']
-        control_cmd = determine_hpwh_control(sim_time=sim_time, current_temp_c=current_setpt, sched_cfg=schedule_cfg)
+        control_cmd = determine_control(sim_time=sim_time, current_temp_c=current_setpt, sched_cfg=schedule_cfg)
         sim_dwelling.update(control_signal=control_cmd)
     df_ctrl, _, _ = sim_dwelling.finalize()
 
@@ -430,7 +424,19 @@ if __name__ == "__main__":
     # ./ochre/utils/schedule.py:186:        df, location = pvlib.iotools.read_psm3(weather_file, map_variables=True)
     # Change to read_nsrdb_psm4 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(simulate_home, home, WEATHER_FILE, my_schedule[sum(int(char) for char in home if char.isdigit()) % 4]) for home in homes]
+        futures = []
+        for home in homes:
+            # Extract digits from the home folder name to use as a unique ID
+            home_basename = os.path.basename(home)
+            digits = [char for char in home_basename if char.isdigit()]
+            home_num = int("".join(digits)) if digits else sum(ord(c) for c in home_basename)
+            
+            # Generate the exact shifted timedeltas for THIS specific home
+            home_sched_td = create_home_schedule(my_schedule1, ramp_duration, bins=8, home_idx=home_num)
+            
+            # Submit to the thread pool
+            futures.append(executor.submit(simulate_home, home, WEATHER_FILE, home_sched_td))
+
         for f in concurrent.futures.as_completed(futures):
             try:
                 f.result()  # forces execution and raises exceptions if any
@@ -439,40 +445,6 @@ if __name__ == "__main__":
 
     print("All simulations complete!")
 
-
-
-
-# def aggregate_results(homes, work_dir, ctrl_cols=None, base_cols=None):
-#     all_ctrl, all_base = [], []
-
-#     for home in homes:
-#         results_dir = os.path.join(home, "Results")
-#         ctrl_file = os.path.join(results_dir, "hpwh_controlled.csv")
-#         base_file = os.path.join(results_dir, "hpwh_baseline.csv")
-
-#         if os.path.exists(ctrl_file):
-#             df_ctrl = pd.read_csv(ctrl_file)
-#             if ctrl_cols:  # filter only selected columns
-#                 df_ctrl = df_ctrl[[c for c in ctrl_cols if c in df_ctrl.columns]]
-#             df_ctrl["Home"] = os.path.basename(home)
-#             all_ctrl.append(df_ctrl)
-
-#         if os.path.exists(base_file):
-#             df_base = pd.read_csv(base_file)
-#             if base_cols:
-#                 df_base = df_base[[c for c in base_cols if c in df_base.columns]]
-#             df_base["Home"] = os.path.basename(home)
-#             all_base.append(df_base)
-
-#     if all_ctrl:
-#         df_ctrl_all = pd.concat(all_ctrl, ignore_index=True)
-#         df_ctrl_all.to_csv(os.path.join(work_dir, "hpwh_controlled_all.csv"), index=False)
-
-#     if all_base:
-#         df_base_all = pd.concat(all_base, ignore_index=True)
-#         df_base_all.to_csv(os.path.join(work_dir, "hpwh_baseline_all.csv"), index=False)
-
-#     print("Aggregated CSVs written!")
 
 def aggregate_results(homes, work_dir):
     all_ctrl, all_base = [], []
@@ -502,20 +474,6 @@ def aggregate_results(homes, work_dir):
     
     print(f"Aggregated CSVs written! {count}")
 
-
-
-
-# CTRL_COLS = ["Time", "Total Electric Power (kW)",
-#              "Total Electric Energy (kWh)",
-#              "Water Heating Electric Power (kW)",
-#              "Water Heating COP (-)",
-#              "Water Heating Deadband Upper Limit (C)",
-#              "Water Heating Deadband Lower Limit (C)",
-#              "Water Heating Heat Pump COP (-)",
-#              "Water Heating Control Temperature (C)",
-#              "Hot Water Outlet Temperature (C)",
-#              "Temperature - Indoor (C)"]
-# BASE_COLS = CTRL_COLS
 
 aggregate_results(homes, WORKING_DIR)
 
