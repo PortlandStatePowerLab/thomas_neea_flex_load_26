@@ -4,7 +4,6 @@ Created on Wed Sep  3 17:39:26 2025
 Modified on Nov 19 2025
 Modified on Aug 25 2026
 
-
 @author: danap
 @edited by: jdinsmor
 @edited by: t-metzler 
@@ -24,9 +23,9 @@ import ochre
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_Schedtest_2'
+filename = 'Combo_WH_Schedtest_4'
 
-Input_folder = "Almost All Portland Input Files"
+Input_folder = "HPWH All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -81,8 +80,8 @@ my_schedule1 = {
     'M_LU_rampin_start':   '06:30', 'M_LU_rampin_end':   '07:30',
     'M_LU_rampout_start':  '07:30', 'M_LU_rampout_end':  '08:30',
 
-    'M_S_rampin_start':    '07:30', 'M_S_rampin_end':    '08:30',
-    'M_S_rampout_start':   '08:30', 'M_S_rampout_end':   '08:30',
+    'M_S_rampin_start':    '09:30', 'M_S_rampin_end':    '09:30',
+    'M_S_rampout_start':   '10:30', 'M_S_rampout_end':   '13:30',
 
     'M_CP_rampin_start':   '07:30', 'M_CP_rampin_end':   '07:30',
     'M_CP_rampout_start':  '07:30', 'M_CP_rampout_end':  '07:30',
@@ -93,11 +92,11 @@ my_schedule1 = {
     'E_ALU_rampin_start':  '13:00', 'E_ALU_rampin_end':  '13:00',
     'E_ALU_rampout_start': '13:00', 'E_ALU_rampout_end': '13:00',
 
-    'E_LU_rampin_start':   '13:00', 'E_LU_rampin_end':   '14:00',
-    'E_LU_rampout_start':  '14:00', 'E_LU_rampout_end':  '15:00',
+    'E_LU_rampin_start':   '15:00', 'E_LU_rampin_end':   '16:00',
+    'E_LU_rampout_start':  '17:00', 'E_LU_rampout_end':  '17:00',
 
-    'E_S_rampin_start':    '15:00', 'E_S_rampin_end':    '16:00',
-    'E_S_rampout_start':   '19:00', 'E_S_rampout_end':   '21:00',
+    'E_S_rampin_start':    '17:00', 'E_S_rampin_end':    '17:00',
+    'E_S_rampout_start':   '20:00', 'E_S_rampout_end':   '23:00',
 
     'E_CP_rampin_start':   '14:00', 'E_CP_rampin_end':   '14:00',
     'E_CP_rampout_start':  '14:00', 'E_CP_rampout_end':  '14:00',
@@ -106,63 +105,29 @@ my_schedule1 = {
     'E_GE_rampout_start':  '14:00', 'E_GE_rampout_end':  '14:00',
 }
 
-
 def shift_time(time_str, minutes):
     """Helper function to add minutes to an 'HH:MM' string."""
-    # Using 'dt' to match your 'import datetime as dt' alias perfectly
     delta_t = dt.datetime.strptime(time_str, '%H:%M')
     new_delta_t = delta_t + dt.timedelta(minutes=minutes)
     return new_delta_t.strftime('%H:%M')
 
-# List to hold all generated schedules
-my_schedule = []
-
-bins = 8
-
-#minutes you will offset schedule
-# LU applies to LU and ALU, S applies to S, CP, GE
-M_LU_in_dt = ramp_duration["M_LU_in"] / bins
-M_LU_out_dt = ramp_duration["M_LU_out"] / bins
-M_S_in_dt = ramp_duration["M_S_in"] / bins
-M_S_out_dt = ramp_duration["M_S_out"] / bins
-E_LU_in_dt = ramp_duration["E_LU_in"] / bins
-E_LU_out_dt = ramp_duration["E_LU_out"] / bins
-E_S_in_dt = ramp_duration["E_S_in"] / bins
-E_S_out_dt = ramp_duration["E_S_out"] / bins
-
-# generate 8 schedules, where the earliest schedule is 0*dt for each, and the latest is (bins-1)*dt. 
-# This will change duration time if the in and out ramp durations are different, but if the duration is 0 it will stay 0. 
-# If the load up goes directly into a shed, the load up out and shed in durations should be forced to be the same and working at the same time.
+bins = 9
 
 #########################################
 # STAGGER SCHEDULES FOR RAMPING
 #########################################
 
-def create_home_schedule(base_sched, ramps, bins, home_idx):
+def create_home_schedule(base_sched, bins, home_idx):
     """
-    Calculates staggered start/end timedeltas for a specific home.
-    ramp_duration values are in HOURS. 
-    (e.g., 2 hours / 8 bins = 0.25 hours = 15 minute steps)
+    Calculates staggered start/end timedeltas for a specific home 
+    distributed across the defined ramp-in and ramp-out periods.
     """
-    # Determine which of the 8 bins this home falls into
     bin_idx = home_idx % bins
-
-    def get_shift(tod, mode, boundary):
-        # Map specific modes to broad ramp categories
-        if mode in ['ALU', 'LU']:
-            category = 'LU'
-        elif mode in ['S', 'CP', 'GE']:
-            category = 'S'
-        else:
-            return pd.Timedelta(0)
-            
-        # Construct the key (e.g., "E_LU_in" or "M_S_out")
-        ramp_key = f"{tod}_{category}_{boundary}"
-        ramp_hours = ramps.get(ramp_key, 0)
-        
-        # Calculate staggering shift
-        shift_hours = ramp_hours * (bin_idx / bins) if bins > 0 else 0
-        return pd.Timedelta(hours=shift_hours)
+    
+    # Calculate the fraction of the ramp duration this bin represents.
+    # We use (bins - 1) so that the first bin is at the exact start (0.0), 
+    # and the last bin is at the exact end (1.0) of the ramp period.
+    ramp_fraction = (bin_idx / (bins - 1)) if bins > 1 else 0
 
     def parse_time(time_str):
         t = dt.datetime.strptime(time_str, '%H:%M')
@@ -178,24 +143,35 @@ def create_home_schedule(base_sched, ramps, bins, home_idx):
         for mode in modes:
             prefix = f"{tod}_{mode}" # e.g. "M_ALU"
             
-            # Fetch start and end strings (default to midnight if missing)
-            start_str = base_sched.get(f"{prefix}_start", "00:00")
-            end_str = base_sched.get(f"{prefix}_end", start_str)
+            # --- RAMP IN (Start of command) ---
+            rin_start_str = base_sched.get(f"{prefix}_rampin_start", "00:00")
+            rin_end_str = base_sched.get(f"{prefix}_rampin_end", rin_start_str)
+            
+            rin_start_td = parse_time(rin_start_str)
+            rin_end_td = parse_time(rin_end_str)
+            rin_duration = rin_end_td - rin_start_td
+            
+            # Interpolate ramp-in time based on bin position
+            home_start_td = rin_start_td + (rin_duration * ramp_fraction)
 
-            # Baseline boundaries
-            start_td = parse_time(start_str)
-            end_td = parse_time(end_str)
+            # --- RAMP OUT (End of command) ---
+            rout_start_str = base_sched.get(f"{prefix}_rampout_start", "00:00")
+            rout_end_str = base_sched.get(f"{prefix}_rampout_end", rout_start_str)
+            
+            rout_start_td = parse_time(rout_start_str)
+            rout_end_td = parse_time(rout_end_str)
+            rout_duration = rout_end_td - rout_start_td
+            
+            # Interpolate ramp-out time based on bin position
+            home_end_td = rout_start_td + (rout_duration * ramp_fraction)
 
-            # Apply the appropriate categorical stagger shifts
-            start_td += get_shift(tod, mode, 'in')
-            end_td += get_shift(tod, mode, 'out')
-
-            home_schedule[prefix] = (start_td, end_td)
+            home_schedule[prefix] = (home_start_td, home_end_td)
 
     print(home_idx)
     print(bin_idx)
     print(home_schedule)
     return home_schedule
+
 
 #########################################
 # TEMPERATURE CONVERSIONS F to C
@@ -286,7 +262,6 @@ def filter_schedules(home_path):
 #########################################
 
 def simulate_home(home_path, weather_file_path, schedule_cfg):
-
     filtered_sched_file = filter_schedules(home_path)
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
     results_dir = os.path.join(home_path, "Results")
@@ -312,7 +287,6 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
             },
         }
     }
-    # quit()
 
     # Baseline
     base_dwelling = Dwelling(name="HPWH Baseline", **dwelling_args_local)
@@ -330,25 +304,19 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         sim_dwelling.update(control_signal=control_cmd)
     df_ctrl, _, _ = sim_dwelling.finalize()
 
-
     df_ctrl = remove_first_day(df_ctrl, Start)
     df_base = remove_first_day(df_base, Start)
     
-
     CTRL_COLS = ["Time", "Total Electric Power (kW)",
                  "Total Electric Energy (kWh)",
                  "Water Heating Electric Power (kW)"]
     BASE_COLS = CTRL_COLS
     
-
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
-
     df_base = df_base[[c for c in BASE_COLS if c in df_base.columns]]
         
-    
     df_ctrl.to_csv(os.path.join(results_dir, 'hpwh_controlled.csv'), index=False)
     df_base.to_csv(os.path.join(results_dir, 'hpwh_baseline.csv'), index=False)
-
 
     return df_ctrl, df_base
 
@@ -366,10 +334,6 @@ def find_all_homes(base_dir):
                os.path.isfile(os.path.join(home_path, CSV_ADDRESS)):
                 homes.append(home_path)
     print(f"-++++++++++++ {homes}\n {base_dir}",)
-    # print(len(homes))
-    # x = list(set(homes))
-    # print(len(x))
-    # quit()
     return homes
 
 #########################################
@@ -393,8 +357,6 @@ def remove_first_day(df, start_date):
     # Remove first day
     first_day_end = start_date + pd.Timedelta(days=1)
     return df[df['Time'] >= first_day_end].copy()
-
-
 
 #########################################
 # MAIN EXECUTION
@@ -433,8 +395,7 @@ if __name__ == "__main__":
     print(f"homes: ", INPUT_DIR)
     print(f"Found {len(homes)} homes")
 
-    # Parallel simulations (threads are Windows-safe)
-    # my_schedule is crazy but I wanted to vary schedules within the for loop, so I summed the digits in the home name and mod by 2 to select one of two schedules
+    # Parallel simulations
     # $ grep -rn "read_psm3(" .
     # ./ochre/utils/schedule.py:186:        df, location = pvlib.iotools.read_psm3(weather_file, map_variables=True)
     # Change to read_nsrdb_psm4 
@@ -443,11 +404,10 @@ if __name__ == "__main__":
         for home in homes:
             # Extract digits from the home folder name to use as a unique ID
             home_basename = os.path.basename(home)
-            digits = [char for char in home_basename if char.isdigit()]
             home_num = sum(int(c) for c in home_basename if c.isdigit())
             
             # Generate the exact shifted timedeltas for THIS specific home
-            home_sched_td = create_home_schedule(my_schedule1, ramp_duration, bins=bins, home_idx=home_num)
+            home_sched_td = create_home_schedule(my_schedule1, bins=bins, home_idx=home_num)
             
             # Submit to the thread pool
             futures.append(executor.submit(simulate_home, home, WEATHER_FILE, home_sched_td))
@@ -489,6 +449,4 @@ def aggregate_results(homes, work_dir):
     
     print(f"Aggregated CSVs written! {count}")
 
-
 aggregate_results(homes, WORKING_DIR)
-
