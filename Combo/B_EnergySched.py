@@ -23,7 +23,7 @@ import ochre
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_Schedtest_4'
+filename = 'Combo_WH_ALUGECP_test_5'
 
 Input_folder = "HPWH All Input Files"
 
@@ -77,11 +77,11 @@ my_schedule1 = {
     'M_ALU_rampin_start':  '06:30', 'M_ALU_rampin_end':  '06:30',
     'M_ALU_rampout_start': '06:30', 'M_ALU_rampout_end': '06:30',
 
-    'M_LU_rampin_start':   '06:30', 'M_LU_rampin_end':   '07:30',
-    'M_LU_rampout_start':  '07:30', 'M_LU_rampout_end':  '08:30',
+    'M_LU_rampin_start':   '04:00', 'M_LU_rampin_end':   '04:00',
+    'M_LU_rampout_start':  '06:00', 'M_LU_rampout_end':  '06:00',
 
-    'M_S_rampin_start':    '09:30', 'M_S_rampin_end':    '09:30',
-    'M_S_rampout_start':   '10:30', 'M_S_rampout_end':   '13:30',
+    'M_S_rampin_start':    '07:00', 'M_S_rampin_end':    '07:00',
+    'M_S_rampout_start':   '09:00', 'M_S_rampout_end':   '09:00',
 
     'M_CP_rampin_start':   '07:30', 'M_CP_rampin_end':   '07:30',
     'M_CP_rampout_start':  '07:30', 'M_CP_rampout_end':  '07:30',
@@ -89,20 +89,20 @@ my_schedule1 = {
     'M_GE_rampin_start':   '07:30', 'M_GE_rampin_end':   '07:30',
     'M_GE_rampout_start':  '07:30', 'M_GE_rampout_end':  '07:30',
 
-    'E_ALU_rampin_start':  '13:00', 'E_ALU_rampin_end':  '13:00',
-    'E_ALU_rampout_start': '13:00', 'E_ALU_rampout_end': '13:00',
+    'E_ALU_rampin_start':  '10:00', 'E_ALU_rampin_end':  '10:00',
+    'E_ALU_rampout_start': '12:00', 'E_ALU_rampout_end': '12:00',
 
-    'E_LU_rampin_start':   '15:00', 'E_LU_rampin_end':   '16:00',
-    'E_LU_rampout_start':  '17:00', 'E_LU_rampout_end':  '17:00',
+    'E_LU_rampin_start':   '15:00', 'E_LU_rampin_end':   '15:00',
+    'E_LU_rampout_start':  '15:00', 'E_LU_rampout_end':  '15:00',
 
     'E_S_rampin_start':    '17:00', 'E_S_rampin_end':    '17:00',
-    'E_S_rampout_start':   '20:00', 'E_S_rampout_end':   '23:00',
+    'E_S_rampout_start':   '17:00', 'E_S_rampout_end':   '17:00',
 
-    'E_CP_rampin_start':   '14:00', 'E_CP_rampin_end':   '14:00',
-    'E_CP_rampout_start':  '14:00', 'E_CP_rampout_end':  '14:00',
+    'E_CP_rampin_start':   '13:00', 'E_CP_rampin_end':   '13:00',
+    'E_CP_rampout_start':  '16:00', 'E_CP_rampout_end':  '16:00',
 
-    'E_GE_rampin_start':   '14:00', 'E_GE_rampin_end':   '14:00',
-    'E_GE_rampout_start':  '14:00', 'E_GE_rampout_end':  '14:00',
+    'E_GE_rampin_start':   '18:00', 'E_GE_rampin_end':   '18:00',
+    'E_GE_rampout_start':  '22:00', 'E_GE_rampout_end':  '22:00',
 }
 
 def shift_time(time_str, minutes):
@@ -111,7 +111,7 @@ def shift_time(time_str, minutes):
     new_delta_t = delta_t + dt.timedelta(minutes=minutes)
     return new_delta_t.strftime('%H:%M')
 
-bins = 9
+bins = 17
 
 #########################################
 # STAGGER SCHEDULES FOR RAMPING
