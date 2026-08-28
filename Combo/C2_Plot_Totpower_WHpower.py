@@ -13,33 +13,57 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
 
-#Copy path naming from HPWH_parse_OCHRE_data_final.py for consistency
 script_dir = os.path.dirname(os.path.abspath(__file__))
-fl_dir = os.path.dirname(script_dir)  
-working_dir = os.path.dirname(fl_dir)
+fl_dir = os.path.dirname(script_dir)
+working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_ALUGECP_test_5'
+input_file_root = "Combo_WH_ALUGECP_test_5"
 
-input_file_name1 = input_file_root + "_baseline"
-input_file_name2 = input_file_root + "_controlled"
-input_file_1  = os.path.join(working_dir, input_file_name1 +".csv")
-input_file_2  = os.path.join(working_dir, input_file_name2 +".csv")
+WH_SIMULATION = "ON"
+HVAC_SIMULATION = "ON"
+DRYER_SIMULATION = "ON"
+EV_SIMULATION = "ON"
+BATTERY_SIMULATION = "ON"
 
-output_append_WHpower = "_WH_power"
-output_file_name1 = input_file_name1 + output_append_WHpower + ".csv"
-output_file_name2 = input_file_name2 + output_append_WHpower + ".csv"
+input_file_name_base = input_file_root + "_baseline"
+input_file_name_ctrl = input_file_root + "_controlled"
+input_file_base  = os.path.join(working_dir, input_file_name_base +".csv")
+input_file_ctrl  = os.path.join(working_dir, input_file_name_ctrl +".csv")
+
 folder_path = os.path.join(working_dir, "Ready_data", input_file_root)
-output_file_1 = os.path.join(working_dir, "Ready_data", input_file_root,output_file_name1)
-output_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name2)
+
+if WH_SIMULATION == "ON":
+    output_append_WHpower = "_WH_power"
+    output_file_name_base_WH = input_file_name_base + output_append_WHpower + ".csv"
+    output_file_name_ctrl_WH = input_file_name_ctrl + output_append_WHpower + ".csv"
+    output_file_base_WH = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_WH)
+    output_file_ctrl_WH = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_WH)
+
+if HVAC_SIMULATION == "ON":
+    output_append_ACpower = "_AC_power"
+    output_file_name_base_AC = input_file_name_base + output_append_ACpower + ".csv"
+    output_file_name_ctrl_AC = input_file_name_ctrl + output_append_ACpower + ".csv"
+    output_file_base_AC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_AC)
+    output_file_ctrl_AC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_AC)
+
+    output_append_HEATpower = "_HEAT_power"
+    output_file_name_base_HEAT = input_file_name_base + output_append_HEATpower + ".csv"
+    output_file_name_ctrl_HEAT = input_file_name_ctrl + output_append_HEATpower + ".csv"
+    output_file_base_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_HEAT)
+    output_file_ctrl_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_HEAT)
+
 
 output_append_totpower = "_total_power"
-output_file_name3 = input_file_name1 + output_append_totpower + ".csv"
-output_file_name4 = input_file_name2 + output_append_totpower + ".csv"
-output_file_3 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name3)
-output_file_4 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name4)
+output_file_name_base_total = input_file_name_base + output_append_totpower + ".csv"
+output_file_name_ctrl_total = input_file_name_ctrl + output_append_totpower + ".csv"
+output_file_base_total = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_total)
+output_file_ctrl_total = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_total)
 
-photo_file_1 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_WH_power_plot.png")
-photo_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_Total_power_plot.png")
+
+photo_file_WH = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_WH_power_plot.png")
+photo_file_AC = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_AC_power_plot.png")
+photo_file_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_HEAT_power_plot.png")
+photo_file_total = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_total_power_plot.png")
 
 
 #Saves the average of each column as a new row
@@ -107,13 +131,23 @@ def plot_data(baseline_file, controlled_file, title, photo_file, ax):
 
     plt.savefig(photo_file, dpi=300, bbox_inches='tight')  # Save the figure
 
-save_avg(output_file_1)
-save_avg(output_file_2)
-plot_data(output_file_1, output_file_2, 'Average Power Consumption per Water Heater', photo_file_1, "ax1")
 
-save_avg(output_file_3)
-save_avg(output_file_4)
-plot_data(output_file_3, output_file_4, 'Average Total Power Consumption per Household', photo_file_2, "ax2")
+if WH_SIMULATION == "ON":
+    save_avg(output_file_base_WH)
+    save_avg(output_file_ctrl_WH)
+    plot_data(output_file_base_WH, output_file_ctrl_WH, 'Average Power Consumption per Water Heater', photo_file_WH, "ax1")
+
+if HVAC_SIMULATION == "ON":
+    save_avg(output_file_base_AC)
+    save_avg(output_file_ctrl_AC)
+    plot_data(output_file_base_AC, output_file_ctrl_AC, 'Average Power Consumption per Water Heater', photo_file_AC, "ax2")
+    save_avg(output_file_base_HEAT)
+    save_avg(output_file_ctrl_HEAT)
+    plot_data(output_file_base_HEAT, output_file_ctrl_HEAT, 'Average Power Consumption per Water Heater', photo_file_HEAT, "ax3")
+
+save_avg(output_file_base_total)
+save_avg(output_file_ctrl_total)
+plot_data(output_file_base_total, output_file_ctrl_total, 'Average Total Power Consumption per Household', photo_file_total, "ax4")
 
 #Show plot at the end so it doesn't overwrite the previous plot
 plt.show()

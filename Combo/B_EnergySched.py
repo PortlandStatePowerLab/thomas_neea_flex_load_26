@@ -25,7 +25,7 @@ import ochre
 
 filename = 'Combo_WH_HVAC_TEST'
 
-Input_folder = "Combo HPWH HVAC Almost All Input Files"
+Input_folder = "Combo HPWH HVAC All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
