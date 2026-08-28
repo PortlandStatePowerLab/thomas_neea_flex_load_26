@@ -52,6 +52,13 @@ Start = dt.datetime(2018, 1, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
+WH_SIMULATION = "ON"
+HVAC_SIMULATION = "ON"
+DRYER_SIMULATION = "ON"
+EV_SIMULATION = "ON"
+BATTERY_SIMULATION = "ON"
+
+
 # HPWH control parameters (°F)
 # GE - Grid Emergency, CP - Critical Peak, Shed
 WH_Tcontrol_GEF = 90
@@ -68,9 +75,46 @@ WH_Tcontrol_LOADdeadbandF = 2
 
 WH_TbaselineF = 130
 WH_TdeadbandF = 7
-WH_Tinit = 128
+WH_Tinit = 130
 
 count = 0
+
+# AC control parameters (°F)
+# GE - Grid Emergency, CP - Critical Peak, Shed
+AC_Tcontrol_GEF = 95
+AC_Tcontrol_GEdeadbandF = 4
+AC_Tcontrol_CPF = 80
+AC_Tcontrol_CPdeadbandF = 4
+AC_Tcontrol_SHEDF = 76
+AC_Tcontrol_deadbandF = 4
+# ALU - Advanced load up, LOAD - Load up
+AC_Tcontrol_ALUF = 64
+AC_Tcontrol_ALUdeadbandF = 2
+AC_Tcontrol_LOADF = 68
+AC_Tcontrol_LOADdeadbandF = 2
+
+AC_TbaselineF = 72
+AC_TdeadbandF = 2
+AC_TinitF = 72
+
+# Heating control parameters (°F)
+# GE - Grid Emergency, CP - Critical Peak, Shed
+HEAT_Tcontrol_GEF = 45
+HEAT_Tcontrol_GEdeadbandF = 4
+HEAT_Tcontrol_CPF = 60
+HEAT_Tcontrol_CPdeadbandF = 4
+HEAT_Tcontrol_SHEDF = 64
+HEAT_Tcontrol_deadbandF = 4
+# ALU - Advanced load up, LOAD - Load up
+HEAT_Tcontrol_ALUF = 76
+HEAT_Tcontrol_ALUdeadbandF = 2
+HEAT_Tcontrol_LOADF = 72
+HEAT_Tcontrol_LOADdeadbandF = 2
+
+HEAT_TbaselineF = 68
+HEAT_TdeadbandF = 2
+HEAT_TinitF = 68
+
 
 # Schedule variant
 my_schedule1 = {
@@ -184,14 +228,14 @@ def f_to_c_DB(temp_f):
     return 5/9 * temp_f
 
 WH_Tcontrol_GEC = f_to_c(WH_Tcontrol_GEF)
-WH_Tcontrol_GEdeadbandC = f_to_c(WH_Tcontrol_GEdeadbandF)
+WH_Tcontrol_GEdeadbandC = f_to_c_DB(WH_Tcontrol_GEdeadbandF)
 WH_Tcontrol_CPC = f_to_c(WH_Tcontrol_CPF)
-WH_Tcontrol_CPdeadbandC = f_to_c(WH_Tcontrol_CPdeadbandF)
+WH_Tcontrol_CPdeadbandC = f_to_c_DB(WH_Tcontrol_CPdeadbandF)
 WH_Tcontrol_SHEDC = f_to_c(WH_Tcontrol_SHEDF)
 WH_Tcontrol_deadbandC = f_to_c_DB(WH_Tcontrol_deadbandF)
 
 WH_Tcontrol_ALUC = f_to_c(WH_Tcontrol_ALUF)
-WH_Tcontrol_ALUdeadbandC = f_to_c(WH_Tcontrol_ALUdeadbandF)
+WH_Tcontrol_ALUdeadbandC = f_to_c_DB(WH_Tcontrol_ALUdeadbandF)
 WH_Tcontrol_LOADC = f_to_c(WH_Tcontrol_LOADF)
 WH_Tcontrol_LOADdeadbandC = f_to_c_DB(WH_Tcontrol_LOADdeadbandF)
 
@@ -199,42 +243,116 @@ WH_TbaselineC = f_to_c(WH_TbaselineF)
 WH_TdeadbandC = f_to_c_DB(WH_TdeadbandF)
 WH_TinitC = f_to_c(WH_Tinit)
 
+
+AC_Tcontrol_GEC = f_to_c(AC_Tcontrol_GEF)
+AC_Tcontrol_GEdeadbandC = f_to_c_DB(AC_Tcontrol_GEdeadbandF)
+AC_Tcontrol_CPC = f_to_c(AC_Tcontrol_CPF)
+AC_Tcontrol_CPdeadbandC = f_to_c_DB(AC_Tcontrol_CPdeadbandF)
+AC_Tcontrol_SHEDC = f_to_c(AC_Tcontrol_SHEDF)
+AC_Tcontrol_deadbandC = f_to_c_DB(AC_Tcontrol_deadbandF)
+
+AC_Tcontrol_ALUC = f_to_c(AC_Tcontrol_ALUF)
+AC_Tcontrol_ALUdeadbandC = f_to_c_DB(AC_Tcontrol_ALUdeadbandF)
+AC_Tcontrol_LOADC = f_to_c(AC_Tcontrol_LOADF)
+AC_Tcontrol_LOADdeadbandC = f_to_c_DB(AC_Tcontrol_LOADdeadbandF)
+
+AC_TbaselineC = f_to_c(AC_TbaselineF)
+AC_TdeadbandC = f_to_c_DB(AC_TdeadbandF)
+AC_TinitC = f_to_c(AC_TinitF)
+
+
+HEAT_Tcontrol_GEC = f_to_c(HEAT_Tcontrol_GEF)
+HEAT_Tcontrol_GEdeadbandC = f_to_c_DB(HEAT_Tcontrol_GEdeadbandF)
+HEAT_Tcontrol_CPC = f_to_c(HEAT_Tcontrol_CPF)
+HEAT_Tcontrol_CPdeadbandC = f_to_c_DB(HEAT_Tcontrol_CPdeadbandF)
+HEAT_Tcontrol_SHEDC = f_to_c(HEAT_Tcontrol_SHEDF)
+HEAT_Tcontrol_deadbandC = f_to_c_DB(HEAT_Tcontrol_deadbandF)
+
+HEAT_Tcontrol_ALUC = f_to_c(HEAT_Tcontrol_ALUF)
+HEAT_Tcontrol_ALUdeadbandC = f_to_c_DB(HEAT_Tcontrol_ALUdeadbandF)
+HEAT_Tcontrol_LOADC = f_to_c(HEAT_Tcontrol_LOADF)
+HEAT_Tcontrol_LOADdeadbandC = f_to_c_DB(HEAT_Tcontrol_LOADdeadbandF)
+
+HEAT_TbaselineC = f_to_c(HEAT_TbaselineF)
+HEAT_TdeadbandC = f_to_c_DB(HEAT_TdeadbandF)
+HEAT_TinitC = f_to_c(HEAT_TinitF)
+
 #########################################
 # CONTROL FUNCTION
 #########################################
 
 def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
-    ctrl_signal = {
-        'Water Heating': {
+    # 1. Initialize an empty control signal dictionary
+    ctrl_signal = {}
+
+    # 2. Add Water Heating if simulated
+    if WH_SIMULATION == "ON":
+        ctrl_signal['Water Heating'] = {
             'Setpoint': WH_TbaselineC,
             'Deadband': WH_TdeadbandC,
             'Load Fraction': 1,
         }
-    }
+
+    # 3. Add HVAC if simulated, checking the month to separate Heating vs Cooling
+    # Let's assume May (5) through Sept (9) is Cooling Season
+    is_cooling_season = sim_time.month in [5, 6, 7, 8, 9]
+
+    if HVAC_SIMULATION == "ON":
+        if is_cooling_season:
+            ctrl_signal['HVAC Cooling'] = {
+                'Setpoint': AC_TbaselineC,
+                'Deadband': AC_TdeadbandC,
+                'Load Fraction': 1,
+            }
+        else:
+            ctrl_signal['HVAC Heating'] = {
+                'Setpoint': HEAT_TbaselineC,
+                'Deadband': HEAT_TdeadbandC,
+                'Load Fraction': 1,
+            }
 
     midnight = pd.to_datetime(sim_time.date())
 
-    # Define modes in priority order (first match wins)
+    # 4. Define modes in priority order: 
+    # (Mode Name, WH_SP, WH_DB, AC_SP, AC_DB, HEAT_SP, HEAT_DB)
     modes = [
-        ('ALU', WH_Tcontrol_ALUC, WH_Tcontrol_ALUdeadbandC),
-        ('LU',  WH_Tcontrol_LOADC, WH_Tcontrol_LOADdeadbandC),
-        ('S',   WH_Tcontrol_SHEDC, WH_Tcontrol_deadbandC),
-        ('CP',  WH_Tcontrol_CPC, WH_Tcontrol_CPdeadbandC),
-        ('GE',  WH_Tcontrol_GEC, WH_Tcontrol_GEdeadbandC)
+        ('ALU', WH_Tcontrol_ALUC, WH_Tcontrol_ALUdeadbandC, AC_Tcontrol_ALUC, AC_Tcontrol_ALUdeadbandC, HEAT_Tcontrol_ALUC, HEAT_Tcontrol_ALUdeadbandC),
+        ('LU',  WH_Tcontrol_LOADC, WH_Tcontrol_LOADdeadbandC, AC_Tcontrol_LOADC, AC_Tcontrol_LOADdeadbandC, HEAT_Tcontrol_LOADC, HEAT_Tcontrol_LOADdeadbandC),
+        ('S',   WH_Tcontrol_SHEDC, WH_Tcontrol_deadbandC, AC_Tcontrol_SHEDC, AC_Tcontrol_deadbandC, HEAT_Tcontrol_SHEDC, HEAT_Tcontrol_deadbandC),
+        ('CP',  WH_Tcontrol_CPC, WH_Tcontrol_CPdeadbandC, AC_Tcontrol_CPC, AC_Tcontrol_CPdeadbandC, HEAT_Tcontrol_CPC, HEAT_Tcontrol_CPdeadbandC),
+        ('GE',  WH_Tcontrol_GEC, WH_Tcontrol_GEdeadbandC, AC_Tcontrol_GEC, AC_Tcontrol_GEdeadbandC, HEAT_Tcontrol_GEC, HEAT_Tcontrol_GEdeadbandC)
     ]
 
-    for mode_name, sp, db in modes:
+    active_mode = None
+
+    # 5. Check schedules to see if a mode is currently active
+    for mode_data in modes:
+        mode_name = mode_data[0]
+        
         # Check Morning
         m_start, m_end = home_schedule_td[f'M_{mode_name}']
         if (midnight + m_start) <= sim_time < (midnight + m_end):
-            ctrl_signal['Water Heating'].update({'Setpoint': sp, 'Deadband': db})
-            return ctrl_signal
+            active_mode = mode_data
+            break
 
         # Check Evening
         e_start, e_end = home_schedule_td[f'E_{mode_name}']
         if (midnight + e_start) <= sim_time < (midnight + e_end):
-            ctrl_signal['Water Heating'].update({'Setpoint': sp, 'Deadband': db})
-            return ctrl_signal
+            active_mode = mode_data
+            break
+
+    # 6. If a mode is active, apply its setpoints to the simulated devices
+    if active_mode:
+        _, wh_sp, wh_db, ac_sp, ac_db, heat_sp, heat_db = active_mode
+        
+        if WH_SIMULATION == "ON":
+            ctrl_signal['Water Heating'].update({'Setpoint': wh_sp, 'Deadband': wh_db})
+            
+        if HVAC_SIMULATION == "ON":
+            if is_cooling_season:
+                ctrl_signal['HVAC Cooling'].update({'Setpoint': ac_sp, 'Deadband': ac_db})
+            else:
+                ctrl_signal['HVAC Heating'].update({'Setpoint': heat_sp, 'Deadband': heat_db})
 
     return ctrl_signal
 
@@ -267,6 +385,20 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     results_dir = os.path.join(home_path, "Results")
     os.makedirs(results_dir, exist_ok=True)
 
+    equipment = []
+
+    if WH_SIMULATION == "ON":
+        equipment["Water Heating"] = {
+                "Initial Temperature (C)": WH_TinitC, 
+                "hp_only_mode": True,
+                "Max Tank Temperature": 70,
+                "Upper Node": 3,
+                "Lower Node": 10,
+                "Upper Node Weight": 0.75,
+        }
+
+
+
     dwelling_args_local = {
         "start_time": Start,
         "time_res": dt.timedelta(minutes=t_res),
@@ -276,16 +408,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "weather_file": weather_file_path,
         "verbosity": 7,
         #"initialization_time": 1,
-        "Equipment": {
-            "Water Heating": {
-                "Initial Temperature (C)": WH_TinitC, 
-                "hp_only_mode": True,
-                "Max Tank Temperature": 70,
-                "Upper Node": 3,
-                "Lower Node": 10,
-                "Upper Node Weight": 0.75,
-            },
-        }
+        "Equipment": equipment
     }
 
     # Baseline
