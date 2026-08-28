@@ -23,9 +23,9 @@ import ochre
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_ALUGECP_test_5'
+filename = 'Combo_WH_HVAC_TEST'
 
-Input_folder = "HPWH All Input Files"
+Input_folder = "Combo HPWH HVAC Almost All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -48,15 +48,15 @@ CSV_ADDRESS = "in.schedules.csv"
 
 
 # Simulation parameters
-Start = dt.datetime(2018, 1, 11, 0, 0)
+Start = dt.datetime(2018, 8, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
 WH_SIMULATION = "ON"
 HVAC_SIMULATION = "ON"
-DRYER_SIMULATION = "ON"
-EV_SIMULATION = "ON"
-BATTERY_SIMULATION = "ON"
+DRYER_SIMULATION = "OFF"
+EV_SIMULATION = "OFF"
+BATTERY_SIMULATION = "OFF"
 
 
 # HPWH control parameters (°F)
@@ -294,7 +294,7 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
         }
 
     # 3. Add HVAC if simulated, checking the month to separate Heating vs Cooling
-    # Let's assume May (5) through Sept (9) is Cooling Season
+    # Let's assume May (5) through Sept (9) is Cooling Season in Portland
     is_cooling_season = sim_time.month in [5, 6, 7, 8, 9]
 
     if HVAC_SIMULATION == "ON":
@@ -385,7 +385,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     results_dir = os.path.join(home_path, "Results")
     os.makedirs(results_dir, exist_ok=True)
 
-    equipment = []
+    equipment = {}
 
     if WH_SIMULATION == "ON":
         equipment["Water Heating"] = {
@@ -397,8 +397,6 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
                 "Upper Node Weight": 0.75,
         }
 
-
-
     dwelling_args_local = {
         "start_time": Start,
         "time_res": dt.timedelta(minutes=t_res),
@@ -407,36 +405,60 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
-        #"initialization_time": 1,
+        # "initialization_time": 1,
         "Equipment": equipment
     }
 
-    # Baseline
+    # --- Baseline Simulation ---
     base_dwelling = Dwelling(name="HPWH Baseline", **dwelling_args_local)
     for t_base in base_dwelling.sim_times:
-        base_ctrl = {"Water Heating": {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1}}
+        # Build baseline control dynamically so we don't crash if things are OFF
+        base_ctrl = {}
+        if WH_SIMULATION == "ON":
+            base_ctrl["Water Heating"] = {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1}
+        
+        if HVAC_SIMULATION == "ON":
+            is_cooling = t_base.month in [5, 6, 7, 8, 9]
+            if is_cooling:
+                base_ctrl["HVAC Cooling"] = {"Setpoint": AC_TbaselineC, "Deadband": AC_TdeadbandC, "Load Fraction": 1}
+            else:
+                base_ctrl["HVAC Heating"] = {"Setpoint": HEAT_TbaselineC, "Deadband": HEAT_TdeadbandC, "Load Fraction": 1}
+                
         base_dwelling.update(control_signal=base_ctrl)
     df_base, _, _ = base_dwelling.finalize()
 
-    # Controlled
+    # --- Controlled Simulation ---
     sim_dwelling = Dwelling(name="HPWH Controlled", **dwelling_args_local)
-    hpwh_unit = sim_dwelling.get_equipment_by_end_use('Water Heating')
+    
+    # Get HPWH unit only if WH_SIMULATION is ON
+    hpwh_unit = None
+    if WH_SIMULATION == "ON":
+        hpwh_unit = sim_dwelling.get_equipment_by_end_use('Water Heating')
+        
     for sim_time in sim_dwelling.sim_times:
-        current_setpt = hpwh_unit.schedule.loc[sim_time, 'Water Heating Setpoint (C)']
+        # Provide a default temp if WH is off so determine_control still works
+        current_setpt = WH_TinitC 
+        if hpwh_unit is not None:
+            current_setpt = hpwh_unit.schedule.loc[sim_time, 'Water Heating Setpoint (C)']
+            
         control_cmd = determine_control(sim_time=sim_time, current_temp_c=current_setpt, home_schedule_td=schedule_cfg)
         sim_dwelling.update(control_signal=control_cmd)
     df_ctrl, _, _ = sim_dwelling.finalize()
 
+    # --- Formatting Output ---
     df_ctrl = remove_first_day(df_ctrl, Start)
     df_base = remove_first_day(df_base, Start)
     
-    CTRL_COLS = ["Time", "Total Electric Power (kW)",
-                 "Total Electric Energy (kWh)",
-                 "Water Heating Electric Power (kW)"]
-    BASE_COLS = CTRL_COLS
+    # Dynamically build output columns based on what's turned ON
+    CTRL_COLS = ["Time", "Total Electric Power (kW)", "Total Electric Energy (kWh)"]
+    if WH_SIMULATION == "ON":
+        CTRL_COLS.append("Water Heating Electric Power (kW)")
+    if HVAC_SIMULATION == "ON":
+        CTRL_COLS.extend(["HVAC Heating Electric Power (kW)", "HVAC Cooling Electric Power (kW)"])
     
+    # Keep only the columns that actually exist in the DataFrame
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
-    df_base = df_base[[c for c in BASE_COLS if c in df_base.columns]]
+    df_base = df_base[[c for c in CTRL_COLS if c in df_base.columns]]
         
     df_ctrl.to_csv(os.path.join(results_dir, 'hpwh_controlled.csv'), index=False)
     df_base.to_csv(os.path.join(results_dir, 'hpwh_baseline.csv'), index=False)

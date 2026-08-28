@@ -32,23 +32,45 @@ working_dir = os.path.dirname(fl_dir)
 
 input_file_root = "Combo_WH_ALUGECP_test_5"
 
-input_file_name1 = input_file_root + "_baseline"
-input_file_name2 = input_file_root + "_controlled"
-input_file_1  = os.path.join(working_dir, input_file_name1 +".csv")
-input_file_2  = os.path.join(working_dir, input_file_name2 +".csv")
+WH_SIMULATION = "ON"
+HVAC_SIMULATION = "ON"
+DRYER_SIMULATION = "ON"
+EV_SIMULATION = "ON"
+BATTERY_SIMULATION = "ON"
 
-output_append_WHpower = "_WH_power"
-output_file_name1 = input_file_name1 + output_append_WHpower + ".csv"
-output_file_name2 = input_file_name2 + output_append_WHpower + ".csv"
+input_file_name_base = input_file_root + "_baseline"
+input_file_name_ctrl = input_file_root + "_controlled"
+input_file_base  = os.path.join(working_dir, input_file_name_base +".csv")
+input_file_ctrl  = os.path.join(working_dir, input_file_name_ctrl +".csv")
+
 folder_path = os.path.join(working_dir, "Ready_data", input_file_root)
-output_file_1 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name1)
-output_file_2 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name2)
+
+if WH_SIMULATION == "ON":
+    output_append_WHpower = "_WH_power"
+    output_file_name_base_WH = input_file_name_base + output_append_WHpower + ".csv"
+    output_file_name_ctrl_WH = input_file_name_ctrl + output_append_WHpower + ".csv"
+    output_file_base_WH = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_WH)
+    output_file_ctrl_WH = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_WH)
+
+if HVAC_SIMULATION == "ON":
+    output_append_ACpower = "_AC_power"
+    output_file_name_base_AC = input_file_name_base + output_append_ACpower + ".csv"
+    output_file_name_ctrl_AC = input_file_name_ctrl + output_append_ACpower + ".csv"
+    output_file_base_AC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_AC)
+    output_file_ctrl_AC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_AC)
+
+    output_append_HEATpower = "_HEAT_power"
+    output_file_name_base_HEAT = input_file_name_base + output_append_HEATpower + ".csv"
+    output_file_name_ctrl_HEAT = input_file_name_ctrl + output_append_HEATpower + ".csv"
+    output_file_base_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_HEAT)
+    output_file_ctrl_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_HEAT)
+
 
 output_append_totpower = "_total_power"
-output_file_name3 = input_file_name1 + output_append_totpower + ".csv"
-output_file_name4 = input_file_name2 + output_append_totpower + ".csv"
-output_file_3 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name3)
-output_file_4 = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name4)
+output_file_name_base_total = input_file_name_base + output_append_totpower + ".csv"
+output_file_name_ctrl_total = input_file_name_ctrl + output_append_totpower + ".csv"
+output_file_base_total = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_total)
+output_file_ctrl_total = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_total)
 
 
 ############################################################################
@@ -87,7 +109,8 @@ def process_data(input_file, output_file, wanted_col):
     # Create column that contains hour and minute data
     df['hr_min'] = df['time'].dt.strftime('%H:%M')
 
-    cols = ['Time', 'Total Electric Power (kW)', 'Total Electric Energy (kWh)', 'Water Heating Electric Power (kW)', 'time']
+    cols = ['Time', 'Total Electric Power (kW)', 'Total Electric Energy (kWh)', 'Water Heating Electric Power (kW)', 
+            'HVAC Heating Electric Power (kW)', 'HVAC Cooling Electric Power (kW)', 'time']
 
     #identify unwanted columns to drop
     unwanted_cols = cols.copy()
@@ -102,7 +125,16 @@ def process_data(input_file, output_file, wanted_col):
     # write data to csv
     df_pivot.to_csv(output_file, index=True)
 
-process_data(input_file_1, output_file_1, 'Water Heating Electric Power (kW)')
-process_data(input_file_2, output_file_2, 'Water Heating Electric Power (kW)')
-process_data(input_file_1, output_file_3, 'Total Electric Power (kW)')
-process_data(input_file_2, output_file_4, 'Total Electric Power (kW)')
+if WH_SIMULATION == "ON":
+    process_data(input_file_base, output_file_base_WH, 'Water Heating Electric Power (kW)')
+    process_data(input_file_ctrl, output_file_ctrl_WH, 'Water Heating Electric Power (kW)')
+
+if HVAC_SIMULATION == "ON":
+    process_data(input_file_base, output_file_base_AC, 'HVAC Cooling Electric Power (kW)')
+    process_data(input_file_ctrl, output_file_ctrl_AC, 'HVAC Cooling Electric Power (kW)')
+    process_data(input_file_base, output_file_base_HEAT, 'HVAC Heating Electric Power (kW)')
+    process_data(input_file_ctrl, output_file_ctrl_HEAT, 'HVAC Heating Electric Power (kW)')    
+
+
+process_data(input_file_base, output_file_base_total, 'Total Electric Power (kW)')
+process_data(input_file_ctrl, output_file_ctrl_total, 'Total Electric Power (kW)')

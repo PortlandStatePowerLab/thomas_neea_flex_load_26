@@ -20,20 +20,21 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 FL_DIR = SCRIPT_DIR.parent 
 WORKING_DIR = FL_DIR.parent
 
-INPUT_DIR = WORKING_DIR / "Almost All Portland Input Files"
-OUTPUT_DIR = WORKING_DIR / "Combo All Portland Input Files"
+INPUT_DIR = WORKING_DIR / "All Portland Input Files"
+OUTPUT_DIR = WORKING_DIR / "Combo HPWH HVAC All Input Files"
 
 METADATA_DIR = WORKING_DIR / "Metadata" / "OR_upgrade0.csv"
 # Load metadata once globally
 metadata_df = pd.read_csv(METADATA_DIR, low_memory=False)
+print(metadata_df)
 
 DEVICES = {
     "device_conversion": {
         "HPWH": "ON",
         "ERWH": "OFF",
         "HVAC": "ON",
-        "Dryer": "ON", 
-        "EV": "ON"
+        "Dryer": "OFF", 
+        "EV": "OFF"
     }
 
 }
