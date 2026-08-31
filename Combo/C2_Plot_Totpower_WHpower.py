@@ -19,7 +19,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_HVAC_TEST_5'
+input_file_root = 'Combo_WH_HVAC_TEST_6'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -106,9 +106,12 @@ def get_active_commands():
                 
                 # Calculate trapezoid time coordinates
                 t0 = pd.to_datetime(str(row['START RAMP IN']).strip(), format='%H:%M')
-                t1 = t0 + pd.Timedelta(minutes=float(row['DURATION RAMP IN']))
+                t1 = t0 + pd.Timedelta(hours=float(row['DURATION RAMP IN']))
                 t2 = pd.to_datetime(str(row['START RAMP OUT']).strip(), format='%H:%M')
-                t3 = t2 + pd.Timedelta(minutes=float(row['DURATION RAMP OUT']))
+                t3 = t2 + pd.Timedelta(hours=float(row['DURATION RAMP OUT']))
+                
+                # --- DEBUG PRINT ---
+                print(f"[{cmd_name}] Ramp In: {t0.strftime('%H:%M')} to {t1.strftime('%H:%M')} | Ramp Out: {t2.strftime('%H:%M')} to {t3.strftime('%H:%M')}")
                 
                 # Assign colors and labels based on the command type
                 if 'ALU' in cmd_name:
