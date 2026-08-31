@@ -23,9 +23,9 @@ import ochre
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_TEST'
+filename = 'Combo_WH_HVAC_TEST_5'
 
-Input_folder = "Combo HPWH HVAC All Input Files"
+Input_folder = "Combo HPWH HVAC Almost All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -51,12 +51,6 @@ CSV_ADDRESS = "in.schedules.csv"
 Start = dt.datetime(2018, 8, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
-
-WH_SIMULATION = "ON"
-HVAC_SIMULATION = "ON"
-DRYER_SIMULATION = "OFF"
-EV_SIMULATION = "OFF"
-BATTERY_SIMULATION = "OFF"
 
 
 # HPWH control parameters (°F)
@@ -116,38 +110,61 @@ HEAT_TdeadbandF = 2
 HEAT_TinitF = 68
 
 
-# Schedule variant
-my_schedule1 = {
-    'M_ALU_rampin_start':  '06:30', 'M_ALU_rampin_end':  '06:30',
-    'M_ALU_rampout_start': '06:30', 'M_ALU_rampout_end': '06:30',
+# ---------------------------------------------------------
+# LOAD DEVICES FROM CSV
+# ---------------------------------------------------------
+devices_file = os.path.join(script_dir, "B0_Devices.csv")
+try:
+    df_devices = pd.read_csv(devices_file)
+    # Convert to dictionary mapping 'Device' to 'Simulation'
+    device_sim_map = dict(zip(df_devices['Device'], df_devices['Simulation']))
+except FileNotFoundError:
+    print(f"[WARNING] {devices_file} not found. Defaulting to OFF.")
+    device_sim_map = {}
 
-    'M_LU_rampin_start':   '04:00', 'M_LU_rampin_end':   '04:00',
-    'M_LU_rampout_start':  '06:00', 'M_LU_rampout_end':  '06:00',
+WH_SIMULATION = device_sim_map.get("WH", "OFF")
+HVAC_SIMULATION = device_sim_map.get("HVAC", "OFF")
+DRYER_SIMULATION = device_sim_map.get("Dryer", "OFF")
+EV_SIMULATION = device_sim_map.get("EV", "OFF")
+BATTERY_SIMULATION = device_sim_map.get("Battery", "OFF")
 
-    'M_S_rampin_start':    '07:00', 'M_S_rampin_end':    '07:00',
-    'M_S_rampout_start':   '09:00', 'M_S_rampout_end':   '09:00',
 
-    'M_CP_rampin_start':   '07:30', 'M_CP_rampin_end':   '07:30',
-    'M_CP_rampout_start':  '07:30', 'M_CP_rampout_end':  '07:30',
+# ---------------------------------------------------------
+# LOAD COMMANDS SCHEDULE FROM CSV
+# ---------------------------------------------------------
+schedule_file = os.path.join(script_dir, "B0_Commands_Schedule.csv")
+my_schedule1 = {}
 
-    'M_GE_rampin_start':   '07:30', 'M_GE_rampin_end':   '07:30',
-    'M_GE_rampout_start':  '07:30', 'M_GE_rampout_end':  '07:30',
-
-    'E_ALU_rampin_start':  '10:00', 'E_ALU_rampin_end':  '10:00',
-    'E_ALU_rampout_start': '12:00', 'E_ALU_rampout_end': '12:00',
-
-    'E_LU_rampin_start':   '15:00', 'E_LU_rampin_end':   '15:00',
-    'E_LU_rampout_start':  '15:00', 'E_LU_rampout_end':  '15:00',
-
-    'E_S_rampin_start':    '17:00', 'E_S_rampin_end':    '17:00',
-    'E_S_rampout_start':   '17:00', 'E_S_rampout_end':   '17:00',
-
-    'E_CP_rampin_start':   '13:00', 'E_CP_rampin_end':   '13:00',
-    'E_CP_rampout_start':  '16:00', 'E_CP_rampout_end':  '16:00',
-
-    'E_GE_rampin_start':   '18:00', 'E_GE_rampin_end':   '18:00',
-    'E_GE_rampout_start':  '22:00', 'E_GE_rampout_end':  '22:00',
-}
+try:
+    df_sched = pd.read_csv(schedule_file)
+    
+    for index, row in df_sched.iterrows():
+        command = str(row['Command']).strip()
+        on_off = str(row['OnOff']).strip().upper()
+        
+        if on_off == 'ON':
+            # -- Parse RAMP IN --
+            start_rin_str = str(row['START RAMP IN']).strip()
+            dur_rin = float(row['DURATION RAMP IN'])
+            
+            t_start_rin = dt.datetime.strptime(start_rin_str, '%H:%M')
+            t_end_rin = t_start_rin + dt.timedelta(hours=dur_rin)
+            
+            my_schedule1[f"{command}_rampin_start"] = t_start_rin.strftime('%H:%M')
+            my_schedule1[f"{command}_rampin_end"] = t_end_rin.strftime('%H:%M')
+            
+            # -- Parse RAMP OUT --
+            start_rout_str = str(row['START RAMP OUT']).strip()
+            dur_rout = float(row['DURATION RAMP OUT'])
+            
+            t_start_rout = dt.datetime.strptime(start_rout_str, '%H:%M')
+            t_end_rout = t_start_rout + dt.timedelta(hours=dur_rout)
+            
+            my_schedule1[f"{command}_rampout_start"] = t_start_rout.strftime('%H:%M')
+            my_schedule1[f"{command}_rampout_end"] = t_end_rout.strftime('%H:%M')
+            
+except FileNotFoundError:
+    print(f"[ERROR] {schedule_file} not found. The simulation may fail.")
 
 def shift_time(time_str, minutes):
     """Helper function to add minutes to an 'HH:MM' string."""
@@ -155,7 +172,7 @@ def shift_time(time_str, minutes):
     new_delta_t = delta_t + dt.timedelta(minutes=minutes)
     return new_delta_t.strftime('%H:%M')
 
-bins = 17
+bins = 5
 
 #########################################
 # STAGGER SCHEDULES FOR RAMPING
@@ -299,15 +316,29 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
 
     if HVAC_SIMULATION == "ON":
         if is_cooling_season:
+            # Normal cooling control
             ctrl_signal['HVAC Cooling'] = {
                 'Setpoint': AC_TbaselineC,
                 'Deadband': AC_TdeadbandC,
                 'Load Fraction': 1,
             }
+            # Suppress heating by pushing setpoint extremely low
+            ctrl_signal['HVAC Heating'] = {
+                'Setpoint': HEAT_Tcontrol_GEC,
+                'Deadband': HEAT_TdeadbandC,
+                'Load Fraction': 1,
+            }
         else:
+            # Normal heating control
             ctrl_signal['HVAC Heating'] = {
                 'Setpoint': HEAT_TbaselineC,
                 'Deadband': HEAT_TdeadbandC,
+                'Load Fraction': 1,
+            }
+            # Suppress cooling by pushing setpoint extremely high
+            ctrl_signal['HVAC Cooling'] = {
+                'Setpoint': AC_Tcontrol_GEC,
+                'Deadband': AC_TdeadbandC,
                 'Load Fraction': 1,
             }
 
@@ -418,11 +449,8 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
             base_ctrl["Water Heating"] = {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1}
         
         if HVAC_SIMULATION == "ON":
-            is_cooling = t_base.month in [5, 6, 7, 8, 9]
-            if is_cooling:
-                base_ctrl["HVAC Cooling"] = {"Setpoint": AC_TbaselineC, "Deadband": AC_TdeadbandC, "Load Fraction": 1}
-            else:
-                base_ctrl["HVAC Heating"] = {"Setpoint": HEAT_TbaselineC, "Deadband": HEAT_TdeadbandC, "Load Fraction": 1}
+            base_ctrl["HVAC Cooling"] = {"Setpoint": AC_TbaselineC, "Deadband": AC_TdeadbandC, "Load Fraction": 1}
+            base_ctrl["HVAC Heating"] = {"Setpoint": HEAT_TbaselineC, "Deadband": HEAT_TdeadbandC, "Load Fraction": 1}
                 
         base_dwelling.update(control_signal=base_ctrl)
     df_base, _, _ = base_dwelling.finalize()

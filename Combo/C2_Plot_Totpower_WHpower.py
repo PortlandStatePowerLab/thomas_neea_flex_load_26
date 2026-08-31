@@ -11,19 +11,34 @@ import pandas as pd
 import os
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import matplotlib.dates as mdates
+import datetime as dt
 
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = "Combo_WH_ALUGECP_test_5"
+input_file_root = 'Combo_WH_HVAC_TEST_5'
 
-WH_SIMULATION = "ON"
-HVAC_SIMULATION = "ON"
-DRYER_SIMULATION = "ON"
-EV_SIMULATION = "ON"
-BATTERY_SIMULATION = "ON"
+# ---------------------------------------------------------
+# LOAD DEVICES FROM CSV
+# ---------------------------------------------------------
+devices_file = os.path.join(script_dir, "B0_Devices.csv")
+try:
+    df_devices = pd.read_csv(devices_file)
+    # Convert to dictionary mapping 'Device' to 'Simulation'
+    device_sim_map = dict(zip(df_devices['Device'], df_devices['Simulation']))
+except FileNotFoundError:
+    print(f"[WARNING] {devices_file} not found. Defaulting to OFF.")
+    device_sim_map = {}
+
+WH_SIMULATION = device_sim_map.get("WH", "OFF")
+HVAC_SIMULATION = device_sim_map.get("HVAC", "OFF")
+DRYER_SIMULATION = device_sim_map.get("Dryer", "OFF")
+EV_SIMULATION = device_sim_map.get("EV", "OFF")
+BATTERY_SIMULATION = device_sim_map.get("Battery", "OFF")
+
 
 input_file_name_base = input_file_root + "_baseline"
 input_file_name_ctrl = input_file_root + "_controlled"
@@ -80,74 +95,112 @@ def save_avg(file):
     # 4. Save back to a CSV file
     df.to_csv(file, index=False)
 
+def get_active_commands():
+    schedule_file = os.path.join(script_dir, "B0_Commands_Schedule.csv")
+    commands = []
+    try:
+        df_sched = pd.read_csv(schedule_file)
+        for _, row in df_sched.iterrows():
+            if str(row['OnOff']).strip().upper() == 'ON':
+                cmd_name = str(row['Command']).strip()
+                
+                # Calculate trapezoid time coordinates
+                t0 = pd.to_datetime(str(row['START RAMP IN']).strip(), format='%H:%M')
+                t1 = t0 + pd.Timedelta(minutes=float(row['DURATION RAMP IN']))
+                t2 = pd.to_datetime(str(row['START RAMP OUT']).strip(), format='%H:%M')
+                t3 = t2 + pd.Timedelta(minutes=float(row['DURATION RAMP OUT']))
+                
+                # Assign colors and labels based on the command type
+                if 'ALU' in cmd_name:
+                    c_type, color = 'Advanced Load Up', "#00FF087C"
+                elif 'LU' in cmd_name:
+                    c_type, color = 'Load Up', "#0077FF85"
+                elif 'CP' in cmd_name:
+                    c_type, color = 'Critical Peak', "#FF660083"
+                elif 'GE' in cmd_name:
+                    c_type, color = 'Grid Emergency', "#FF00008F"
+                elif 'S' in cmd_name:
+                    c_type, color = 'Shed', "#FF00DD8D"
+                else:
+                    c_type, color = 'Other', '#9E9E9E'
+                    
+                commands.append({'type': c_type, 'color': color, 'times': [t0, t1, t2, t3]})
+    except FileNotFoundError:
+        print(f"[WARNING] Schedule file not found.")
+    return commands
+
 #plot the data and save the plot
-def plot_data(baseline_file, controlled_file, title, photo_file, ax):
-    # Load the CSV file
-    df_base = pd.read_csv(baseline_file, index_col=0)  # Assuming the first column is the index
-    df_con= pd.read_csv(controlled_file, index_col=0)  # Assuming the first column is the index
+def plot_data(baseline_file, controlled_file, title, photo_file, schedule_commands):
+    df_base = pd.read_csv(baseline_file, index_col=0)
+    df_con = pd.read_csv(controlled_file, index_col=0)
 
-    # Extract the first row (index 0) and last row (index -1)
-    # .iloc[[0, -1]] selects both rows into a new DataFrame
-    subset_df_base = df_base.iloc[[0, -1]]
-    subset_df_con = df_con.iloc[[0, -1]]
-
-    #transpose data to have time as columns and power as rows
-    transposed_df_base = subset_df_base.iloc[1,:]
-    transposed_df_con = subset_df_con.iloc[1,:]
+    # Extract averages and transpose (Keeping your existing logic)
+    df_base = pd.DataFrame(df_base.iloc[[0, -1]].iloc[1, :]).reset_index()
+    df_con = pd.DataFrame(df_con.iloc[[0, -1]].iloc[1, :]).reset_index()
     
-    #Switch to dataframe and reset index to have time as a column
-    df_base = pd.DataFrame (transposed_df_base)
-    df_con = pd.DataFrame (transposed_df_con)
-    
-    df_base.index = df_base.index.str.replace('Home', 'Time')
-    df_con.index = df_con.index.str.replace('Home', 'Time')
-
-    df_base = df_base.reset_index ()
-    # change columns names:
     df_base.columns = ['Time', 'baseline']
-
-    df_con = df_con.reset_index ()
-    # change columns names:
     df_con.columns = ['Time', 'controlled']
 
-    # convert time column to a usable datetime fomat
-    df_base['Time'] = pd.to_datetime(df_base['Time'], errors='coerce').dt.strftime('%H:%M')
-    df_con['Time'] = pd.to_datetime(df_con['Time'], errors='coerce').dt.strftime('%H:%M')
+    # Convert to actual datetime objects for smooth plotting
+    df_base['Time'] = pd.to_datetime(df_base['Time'], format='%H:%M', errors='coerce')
+    df_con['Time'] = pd.to_datetime(df_con['Time'], format='%H:%M', errors='coerce')
 
-    #plot
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot (df_base['Time'], df_base['baseline'], label='baseline', color='blue', linestyle='-')
-    ax.plot (df_con['Time'], df_con['controlled'], label='controlled', color='orange', linestyle='--')
+    fig, ax1 = plt.subplots(figsize=(10, 5))
 
-    # Customize and display
-    ax.set_title(title)
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Power (kW)')
-    ax.legend() # Displays labels properly
-    # ax.set_xlim(0, 24)
-    # ax.set_xticks([0,6,12,18,24])
+    # --- PRIMARY AXIS: Power ---
+    ax1.plot(df_base['Time'], df_base['baseline'], label='Baseline', color='#004C6D', linewidth=2)
+    ax1.plot(df_con['Time'], df_con['controlled'], label='Controlled', color='#E26D28', linewidth=2)
+    ax1.set_ylabel('Power (kW)')
+    ax1.set_title(title)
+    ax1.grid(True, alpha=0.3)
 
-    ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=6))  # Limit ticks
+    # --- SECONDARY AXIS: Command Ramping ---
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Fraction of units given command')
+    ax2.set_ylim(0, 1)
+    
+    added_labels = set()
+    for cmd in schedule_commands:
+        y_vals = [0, 1, 1, 0] # Trapezoid height
+        label = cmd['type'] if cmd['type'] not in added_labels else ""
+        if label: added_labels.add(label)
+            
+        ax2.plot(cmd['times'], y_vals, color=cmd['color'], linewidth=1)
+        ax2.fill_between(cmd['times'], y_vals, color=cmd['color'], alpha=0.1, label=label)
 
-    plt.savefig(photo_file, dpi=300, bbox_inches='tight')  # Save the figure
+    # --- FORMATTING & LEGEND ---
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax1.xaxis.set_major_locator(mdates.HourLocator(interval=2))
+    plt.setp(ax1.get_xticklabels(), rotation=45)
 
+    # Combine legends from both axes at the bottom
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False)
+
+    plt.tight_layout()
+    plt.savefig(photo_file, dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+active_commands = get_active_commands()
 
 if WH_SIMULATION == "ON":
     save_avg(output_file_base_WH)
     save_avg(output_file_ctrl_WH)
-    plot_data(output_file_base_WH, output_file_ctrl_WH, 'Average Power Consumption per Water Heater', photo_file_WH, "ax1")
+    plot_data(output_file_base_WH, output_file_ctrl_WH, 'Average Power Consumption per Water Heater', photo_file_WH, active_commands)
 
 if HVAC_SIMULATION == "ON":
     save_avg(output_file_base_AC)
     save_avg(output_file_ctrl_AC)
-    plot_data(output_file_base_AC, output_file_ctrl_AC, 'Average Power Consumption per Water Heater', photo_file_AC, "ax2")
+    plot_data(output_file_base_AC, output_file_ctrl_AC, 'Average Power Consumption per AC System', photo_file_AC, active_commands)
     save_avg(output_file_base_HEAT)
     save_avg(output_file_ctrl_HEAT)
-    plot_data(output_file_base_HEAT, output_file_ctrl_HEAT, 'Average Power Consumption per Water Heater', photo_file_HEAT, "ax3")
+    plot_data(output_file_base_HEAT, output_file_ctrl_HEAT, 'Average Power Consumption per Heating System', photo_file_HEAT, active_commands)
 
 save_avg(output_file_base_total)
 save_avg(output_file_ctrl_total)
-plot_data(output_file_base_total, output_file_ctrl_total, 'Average Total Power Consumption per Household', photo_file_total, "ax4")
+plot_data(output_file_base_total, output_file_ctrl_total, 'Average Total Power Consumption per Household', photo_file_total, active_commands)
 
 #Show plot at the end so it doesn't overwrite the previous plot
 plt.show()
