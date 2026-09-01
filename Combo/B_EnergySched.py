@@ -24,9 +24,9 @@ import numpy as np
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_TEST_5'
+filename = 'Combo_WH_HVAC_Dryer_TEST_1'
 
-Input_folder = "Combo HPWH HVAC Almost All Input Files"
+Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -349,11 +349,10 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
             }
 
     # Add dryers if simulated
-    ctrl_signal = {
-       'Clothes Dryer': {
+    if DRYER_SIMULATION == "ON":
+        ctrl_signal['Clothes Dryer'] = {
             'Load Fraction': 1  # 1 = Normal schedule operation
         }
-    }
 
 
     midnight = pd.to_datetime(sim_time.date())
@@ -452,27 +451,34 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     df_sched['Datetime'] = pd.date_range(start="2018-01-01 00:00:00", periods=len(df_sched), freq=f'{t_res_minutes}min')
     df_sched.set_index('Datetime', inplace=True)
     
-    # 1. Build a boolean mask for ALL shed periods
-    in_shed = np.zeros(len(df_sched), dtype=bool)
-    time_series = df_sched.index.time
+    # Track the active duty cycle for each timestep (default to 1.0 - no curtailment)
+    duty_cycles = np.ones(len(df_sched), dtype=float)
     
-    for prefix in ['M_S', 'E_S']:
-        start_str = sched_cfg[f'{prefix}_time']
-        duration_hrs = sched_cfg[f'{prefix}_duration']
-        if duration_hrs <= 0: continue
-        
-        start_time = pd.to_datetime(start_str).time()
-        end_time = (pd.to_datetime(start_str) + pd.Timedelta(hours=duration_hrs)).time()
-        
-        # Handle midnight crossovers safely
-        if start_time < end_time:
-            mask = (time_series >= start_time) & (time_series < end_time)
-        else: 
-            mask = (time_series >= start_time) | (time_series < end_time)
-            
-        in_shed = in_shed | mask
+    # Get the time of day as a timedelta from midnight for easy comparison
+    time_of_day = df_sched.index - df_sched.index.normalize()
+    
+    # Map modes to their respective duty cycle variables defined in your script
+    curtailment_modes = {
+        'S': dryer_duty_cycle_shed,
+        'CP': dryer_duty_cycle_cp,
+        'GE': dryer_duty_cycle_ge
+    }
 
-    # 2. Accumulate and distribute load to conserve total schedule sum
+    # Build the duty cycle array based on all shed periods in the schedule config
+    for tod in ['M', 'E']:
+        for mode, dc_value in curtailment_modes.items():
+            key = f"{tod}_{mode}"
+            if key in sched_cfg:
+                start_td, end_td = sched_cfg[key]
+                # Apply the duty cycle where the time of day falls within the start and end
+                mask = (time_of_day >= start_td) & (time_of_day < end_td)
+                # If modes overlap, apply the most aggressive curtailment (lowest duty cycle)
+                duty_cycles[mask] = np.minimum(duty_cycles[mask], dc_value)
+
+    # Create boolean mask for boundary detection (where duty cycle < 1)
+    in_shed = duty_cycles < 1.0
+
+    # Accumulate and distribute load to conserve total schedule sum
     orig_vals = df_sched[dryer_col].values
     new_vals = np.zeros_like(orig_vals, dtype=float)
     
@@ -494,13 +500,8 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
             if i > 0 and in_shed[i] != in_shed[i-1]:
                 run_amt = 0.0
             else:
-                # Throttle the max allowable rate if we are in a shed period
-                if in_shed[i]:
-                    allowed_rate = max_cap * dryer_duty_cycle_shed
-                else:
-                    allowed_rate = max_cap
-                    
-                # Run the dryer up to the allowed rate, but no more than what's left in the queue
+                # Throttle using the specific duty cycle for this timestep
+                allowed_rate = max_cap * duty_cycles[i]
                 run_amt = min(work_queue, allowed_rate)
                 
             new_vals[i] = run_amt
@@ -520,7 +521,9 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
 #########################################
 
 def simulate_home(home_path, weather_file_path, schedule_cfg):
-    filtered_sched_file = filter_schedules(home_path)
+    # 1. Use prepare_schedules instead of filter_schedules to get the separated files
+    base_sched_file, ctrl_sched_file = prepare_schedules(home_path, schedule_cfg, t_res)
+    
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
     results_dir = os.path.join(home_path, "Results")
     os.makedirs(results_dir, exist_ok=True)
@@ -537,12 +540,12 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
                 "Upper Node Weight": 0.75,
         }
 
+    # 2. Remove "hpxml_schedule_file" from these shared arguments
     dwelling_args_local = {
         "start_time": Start,
         "time_res": dt.timedelta(minutes=t_res),
         "duration": dt.timedelta(days=Duration),
         "hpxml_file": hpxml_file,
-        "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
         # "initialization_time": 1,
@@ -550,7 +553,9 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     }
 
     # --- Baseline Simulation ---
-    base_dwelling = Dwelling(name="HPWH Baseline", **dwelling_args_local)
+    # 3. Explicitly pass the baseline schedule file to the baseline dwelling
+    base_dwelling = Dwelling(name="Home Baseline", hpxml_schedule_file=base_sched_file, **dwelling_args_local)
+    
     for t_base in base_dwelling.sim_times:
         # Build baseline control dynamically so we don't crash if things are OFF
         base_ctrl = {}
@@ -565,7 +570,8 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     df_base, _, _ = base_dwelling.finalize()
 
     # --- Controlled Simulation ---
-    sim_dwelling = Dwelling(name="HPWH Controlled", **dwelling_args_local)
+    # 4. Explicitly pass the controlled (shifted) schedule file to the controlled dwelling
+    sim_dwelling = Dwelling(name="Home Controlled", hpxml_schedule_file=ctrl_sched_file, **dwelling_args_local)
     
     # Get HPWH unit only if WH_SIMULATION is ON
     hpwh_unit = None
@@ -592,13 +598,15 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         CTRL_COLS.append("Water Heating Electric Power (kW)")
     if HVAC_SIMULATION == "ON":
         CTRL_COLS.extend(["HVAC Heating Electric Power (kW)", "HVAC Cooling Electric Power (kW)"])
+    if DRYER_SIMULATION == "ON":
+        CTRL_COLS.append("Clothes Dryer Electric Power (kW)")
     
     # Keep only the columns that actually exist in the DataFrame
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
     df_base = df_base[[c for c in CTRL_COLS if c in df_base.columns]]
         
-    df_ctrl.to_csv(os.path.join(results_dir, 'hpwh_controlled.csv'), index=False)
-    df_base.to_csv(os.path.join(results_dir, 'hpwh_baseline.csv'), index=False)
+    df_ctrl.to_csv(os.path.join(results_dir, 'home_controlled.csv'), index=False)
+    df_base.to_csv(os.path.join(results_dir, 'home_baseline.csv'), index=False)
 
     return df_ctrl, df_base
 
@@ -708,8 +716,8 @@ def aggregate_results(homes, work_dir):
 
     for home in homes:
         results_dir = os.path.join(home, "Results")
-        ctrl_file = os.path.join(results_dir, "hpwh_controlled.csv")
-        base_file = os.path.join(results_dir, "hpwh_baseline.csv")
+        ctrl_file = os.path.join(results_dir, "home_controlled.csv")
+        base_file = os.path.join(results_dir, "home_baseline.csv")
         #print(f"Aggregated CSVs written to {results_dir}!")
         if os.path.exists(ctrl_file):
             df_ctrl = pd.read_csv(ctrl_file)

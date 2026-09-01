@@ -33,7 +33,7 @@ DEVICES = {
         "HPWH": "ON",
         "ERWH": "OFF",
         "HVAC": "ON",
-        "Dryer": "OFF", 
+        "Dryer": "ON", 
         "EV": "OFF"
     }
 
