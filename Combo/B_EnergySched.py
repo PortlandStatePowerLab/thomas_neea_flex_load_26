@@ -18,6 +18,7 @@ from ochre.utils.schedule import ALL_SCHEDULE_NAMES
 import concurrent.futures
 from pathlib import Path
 import ochre
+import numpy as np
 
 #########################################
 # USER SETTINGS
@@ -109,6 +110,11 @@ HEAT_TbaselineF = 68
 HEAT_TdeadbandF = 2
 HEAT_TinitF = 68
 
+# Dryer duty cycle parameters, dryers can't load up only curtail power
+dryer_duty_cycle_shed = 0.5
+dryer_duty_cycle_cp = 0.25
+dryer_duty_cycle_ge = 0
+
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -172,7 +178,7 @@ def shift_time(time_str, minutes):
     new_delta_t = delta_t + dt.timedelta(minutes=minutes)
     return new_delta_t.strftime('%H:%M')
 
-bins = 5
+bins = 17
 
 #########################################
 # STAGGER SCHEDULES FOR RAMPING
@@ -299,10 +305,10 @@ HEAT_TinitC = f_to_c(HEAT_TinitF)
 #########################################
 
 def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
-    # 1. Initialize an empty control signal dictionary
+    # Initialize an empty control signal dictionary
     ctrl_signal = {}
 
-    # 2. Add Water Heating if simulated
+    # Add Water Heating if simulated
     if WH_SIMULATION == "ON":
         ctrl_signal['Water Heating'] = {
             'Setpoint': WH_TbaselineC,
@@ -310,7 +316,7 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
             'Load Fraction': 1,
         }
 
-    # 3. Add HVAC if simulated, checking the month to separate Heating vs Cooling
+    # Add HVAC if simulated, checking the month to separate Heating vs Cooling
     # Let's assume May (5) through Sept (9) is Cooling Season in Portland
     is_cooling_season = sim_time.month in [5, 6, 7, 8, 9]
 
@@ -342,9 +348,17 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
                 'Load Fraction': 1,
             }
 
+    # Add dryers if simulated
+    ctrl_signal = {
+       'Clothes Dryer': {
+            'Load Fraction': 1  # 1 = Normal schedule operation
+        }
+    }
+
+
     midnight = pd.to_datetime(sim_time.date())
 
-    # 4. Define modes in priority order: 
+    # Define modes in priority order: 
     # (Mode Name, WH_SP, WH_DB, AC_SP, AC_DB, HEAT_SP, HEAT_DB)
     modes = [
         ('ALU', WH_Tcontrol_ALUC, WH_Tcontrol_ALUdeadbandC, AC_Tcontrol_ALUC, AC_Tcontrol_ALUdeadbandC, HEAT_Tcontrol_ALUC, HEAT_Tcontrol_ALUdeadbandC),
@@ -356,7 +370,7 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
 
     active_mode = None
 
-    # 5. Check schedules to see if a mode is currently active
+    # Check schedules to see if a mode is currently active
     for mode_data in modes:
         mode_name = mode_data[0]
         
@@ -372,7 +386,7 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
             active_mode = mode_data
             break
 
-    # 6. If a mode is active, apply its setpoints to the simulated devices
+    # If a mode is active, apply its setpoints to the simulated devices
     if active_mode:
         _, wh_sp, wh_db, ac_sp, ac_db, heat_sp, heat_db = active_mode
         
@@ -405,6 +419,101 @@ def filter_schedules(home_path):
     df_sched_filtered = df_sched[filtered_columns]
     df_sched_filtered.to_csv(filtered_sched_file, index=False)
     return filtered_sched_file
+
+def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
+    """
+    Creates a baseline schedule and a controlled schedule.
+    Uses a load accumulator to stretch run times during shed periods,
+    conserving the total run time (area under the curve).
+    """
+    orig_sched_file = os.path.join(home_path, CSV_ADDRESS)
+    base_sched_file = os.path.join(home_path, 'baseline_schedules.csv')
+    ctrl_sched_file = os.path.join(home_path, 'controlled_schedules.csv')
+
+    df_sched = pd.read_csv(orig_sched_file)
+    
+    # Filter valid columns
+    valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
+    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
+    df_sched = df_sched[filtered_columns].copy()
+    
+    # Save baseline
+    df_sched.to_csv(base_sched_file, index=False)
+
+    # Find the dryer column
+    dryer_cols = [c for c in df_sched.columns if 'dryer' in c.lower()]
+    if not dryer_cols:
+        df_sched.to_csv(ctrl_sched_file, index=False) # No dryer to shift
+        return base_sched_file, ctrl_sched_file
+    
+    dryer_col = dryer_cols[0]
+
+    # Create dummy datetime index for easy time-of-day masking
+    df_sched['Datetime'] = pd.date_range(start="2018-01-01 00:00:00", periods=len(df_sched), freq=f'{t_res_minutes}min')
+    df_sched.set_index('Datetime', inplace=True)
+    
+    # 1. Build a boolean mask for ALL shed periods
+    in_shed = np.zeros(len(df_sched), dtype=bool)
+    time_series = df_sched.index.time
+    
+    for prefix in ['M_S', 'E_S']:
+        start_str = sched_cfg[f'{prefix}_time']
+        duration_hrs = sched_cfg[f'{prefix}_duration']
+        if duration_hrs <= 0: continue
+        
+        start_time = pd.to_datetime(start_str).time()
+        end_time = (pd.to_datetime(start_str) + pd.Timedelta(hours=duration_hrs)).time()
+        
+        # Handle midnight crossovers safely
+        if start_time < end_time:
+            mask = (time_series >= start_time) & (time_series < end_time)
+        else: 
+            mask = (time_series >= start_time) | (time_series < end_time)
+            
+        in_shed = in_shed | mask
+
+    # 2. Accumulate and distribute load to conserve total schedule sum
+    orig_vals = df_sched[dryer_col].values
+    new_vals = np.zeros_like(orig_vals, dtype=float)
+    
+    # Find the maximum normal operating coefficient (usually 1.0)
+    max_cap = orig_vals.max() if orig_vals.max() > 0 else 1.0
+    work_queue = 0.0
+    
+    for i in range(len(orig_vals)):
+        # Add the current timestep's scheduled work to the queue
+        work_queue += orig_vals[i]
+        
+        # Clean up floating point precision remnants
+        if work_queue < 1e-6:
+            work_queue = 0.0
+            
+        if work_queue > 0:
+            # TRICK OCHRE: Detect any boundary (entering or exiting a shed)
+            # Force a 0 for exactly one timestep to split the event
+            if i > 0 and in_shed[i] != in_shed[i-1]:
+                run_amt = 0.0
+            else:
+                # Throttle the max allowable rate if we are in a shed period
+                if in_shed[i]:
+                    allowed_rate = max_cap * dryer_duty_cycle_shed
+                else:
+                    allowed_rate = max_cap
+                    
+                # Run the dryer up to the allowed rate, but no more than what's left in the queue
+                run_amt = min(work_queue, allowed_rate)
+                
+            new_vals[i] = run_amt
+            work_queue -= run_amt
+
+    # Assign new values back to the dataframe
+    df_sched[dryer_col] = new_vals
+    df_sched.reset_index(drop=True, inplace=True)
+    
+    # Save controlled schedule
+    df_sched.to_csv(ctrl_sched_file, index=False)
+    
+    return base_sched_file, ctrl_sched_file
 
 #########################################
 # SIMULATION FUNCTION
