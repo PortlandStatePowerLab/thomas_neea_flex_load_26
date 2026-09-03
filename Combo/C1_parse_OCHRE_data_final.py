@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_HVAC_TEST_6'
+input_file_root = 'Combo_WH_HVAC_Dryer_TEST_2'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -78,6 +78,13 @@ if HVAC_SIMULATION == "ON":
     output_file_base_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_HEAT)
     output_file_ctrl_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_HEAT)
 
+
+if DRYER_SIMULATION == "ON":
+    output_append_Dryerpower = "_Dryer_power"
+    output_file_name_base_Dryer = input_file_name_base + output_append_Dryerpower + ".csv"
+    output_file_name_ctrl_Dryer = input_file_name_ctrl + output_append_Dryerpower + ".csv"
+    output_file_base_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_Dryer)
+    output_file_ctrl_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_Dryer)
 
 output_append_totpower = "_total_power"
 output_file_name_base_total = input_file_name_base + output_append_totpower + ".csv"
@@ -129,6 +136,8 @@ def process_data(input_file, output_file, wanted_col):
     if HVAC_SIMULATION == "ON":
         cols.append('HVAC Heating Electric Power (kW)')
         cols.append('HVAC Cooling Electric Power (kW)')
+    if DRYER_SIMULATION == "ON":
+        cols.append('Clothes Dryer Electric Power (kW)')
 
     #identify unwanted columns to drop
     unwanted_cols = cols.copy()
@@ -152,6 +161,10 @@ if HVAC_SIMULATION == "ON":
     process_data(input_file_ctrl, output_file_ctrl_AC, 'HVAC Cooling Electric Power (kW)')
     process_data(input_file_base, output_file_base_HEAT, 'HVAC Heating Electric Power (kW)')
     process_data(input_file_ctrl, output_file_ctrl_HEAT, 'HVAC Heating Electric Power (kW)')    
+
+if DRYER_SIMULATION == "ON":
+    process_data(input_file_base, output_file_base_Dryer, 'Clothes Dryer Electric Power (kW)')
+    process_data(input_file_ctrl, output_file_ctrl_Dryer, 'Clothes Dryer Electric Power (kW)')
 
 
 process_data(input_file_base, output_file_base_total, 'Total Electric Power (kW)')

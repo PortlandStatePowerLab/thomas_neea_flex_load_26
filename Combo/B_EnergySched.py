@@ -24,7 +24,7 @@ import numpy as np
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_Dryer_TEST_1'
+filename = 'Combo_WH_HVAC_Dryer_TEST_2'
 
 Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
 
@@ -430,13 +430,18 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     ctrl_sched_file = os.path.join(home_path, 'controlled_schedules.csv')
 
     df_sched = pd.read_csv(orig_sched_file)
-    
-    # Filter valid columns
+
+    # if OCHRE valid names filter strips everything, keep original columns
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
     filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
-    df_sched = df_sched[filtered_columns].copy()
     
-    # Save baseline
+    if not filtered_columns:
+        print(f"[WARNING] No columns matched ALL_SCHEDULE_NAMES for {home_path}. Retaining all original columns.")
+        df_sched = df_sched.copy()
+    else:
+        df_sched = df_sched[filtered_columns].copy()
+
+    # Save baseline schedule
     df_sched.to_csv(base_sched_file, index=False)
 
     # Find the dryer column
@@ -447,7 +452,7 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     
     dryer_col = dryer_cols[0]
 
-    # Create dummy datetime index for easy time-of-day masking
+    # Create dummy datetime index for time-of-day masking
     df_sched['Datetime'] = pd.date_range(start="2018-01-01 00:00:00", periods=len(df_sched), freq=f'{t_res_minutes}min')
     df_sched.set_index('Datetime', inplace=True)
     
@@ -495,7 +500,7 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
             work_queue = 0.0
             
         if work_queue > 0:
-            # TRICK OCHRE: Detect any boundary (entering or exiting a shed)
+            # Detect any boundary (entering or exiting a shed)
             # Force a 0 for exactly one timestep to split the event
             if i > 0 and in_shed[i] != in_shed[i-1]:
                 run_amt = 0.0

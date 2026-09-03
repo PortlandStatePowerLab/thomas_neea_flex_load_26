@@ -19,7 +19,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_HVAC_TEST_6'
+input_file_root = 'Combo_WH_HVAC_Dryer_TEST_2'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -67,6 +67,13 @@ if HVAC_SIMULATION == "ON":
     output_file_base_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_HEAT)
     output_file_ctrl_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_HEAT)
 
+if DRYER_SIMULATION == "ON":
+    output_append_Dryerpower = "_Dryer_power"
+    output_file_name_base_Dryer = input_file_name_base + output_append_Dryerpower + ".csv"
+    output_file_name_ctrl_Dryer = input_file_name_ctrl + output_append_Dryerpower + ".csv"
+    output_file_base_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_Dryer)
+    output_file_ctrl_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_Dryer)
+
 
 output_append_totpower = "_total_power"
 output_file_name_base_total = input_file_name_base + output_append_totpower + ".csv"
@@ -78,6 +85,7 @@ output_file_ctrl_total = os.path.join(working_dir, "Ready_data", input_file_root
 photo_file_WH = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_WH_power_plot.png")
 photo_file_AC = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_AC_power_plot.png")
 photo_file_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_HEAT_power_plot.png")
+photo_file_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_Dryer_power_plot.png")
 photo_file_total = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_total_power_plot.png")
 
 
@@ -200,6 +208,11 @@ if HVAC_SIMULATION == "ON":
     save_avg(output_file_base_HEAT)
     save_avg(output_file_ctrl_HEAT)
     plot_data(output_file_base_HEAT, output_file_ctrl_HEAT, 'Average Power Consumption per Heating System', photo_file_HEAT, active_commands)
+
+if DRYER_SIMULATION == "ON":
+    save_avg(output_file_base_Dryer)
+    save_avg(output_file_ctrl_Dryer)
+    plot_data(output_file_base_Dryer, output_file_ctrl_Dryer, 'Average Power Consumption per Dryer', photo_file_Dryer, active_commands)
 
 save_avg(output_file_base_total)
 save_avg(output_file_ctrl_total)
