@@ -19,7 +19,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_HVAC_Dryer_TEST_2'
+input_file_root = 'Combo_WH_HVAC_Dryer_EV_TEST_2'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -74,6 +74,18 @@ if DRYER_SIMULATION == "ON":
     output_file_base_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_Dryer)
     output_file_ctrl_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_Dryer)
 
+if EV_SIMULATION == "ON":
+    output_append_EVpower = "_EV_power"
+    output_file_name_base_EV = input_file_name_base + output_append_EVpower + ".csv"
+    output_file_name_ctrl_EV = input_file_name_ctrl + output_append_EVpower + ".csv"
+    output_file_base_EV = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_EV)
+    output_file_ctrl_EV = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_EV)
+
+    output_append_EVSOC = "_EV_SOC"
+    output_file_name_base_EVSOC = input_file_name_base + output_append_EVSOC + ".csv"
+    output_file_name_ctrl_EVSOC = input_file_name_ctrl + output_append_EVSOC + ".csv"
+    output_file_base_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_EVSOC)
+    output_file_ctrl_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_EVSOC)
 
 output_append_totpower = "_total_power"
 output_file_name_base_total = input_file_name_base + output_append_totpower + ".csv"
@@ -86,6 +98,8 @@ photo_file_WH = os.path.join(working_dir, "Ready_data", input_file_root, input_f
 photo_file_AC = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_AC_power_plot.png")
 photo_file_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_HEAT_power_plot.png")
 photo_file_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_Dryer_power_plot.png")
+photo_file_EV = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_EV_power_plot.png")
+photo_file_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_EV_SOC_plot.png")
 photo_file_total = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_total_power_plot.png")
 
 
@@ -213,6 +227,14 @@ if DRYER_SIMULATION == "ON":
     save_avg(output_file_base_Dryer)
     save_avg(output_file_ctrl_Dryer)
     plot_data(output_file_base_Dryer, output_file_ctrl_Dryer, 'Average Power Consumption per Dryer', photo_file_Dryer, active_commands)
+
+if EV_SIMULATION == "ON":
+    save_avg(output_file_base_EV)
+    save_avg(output_file_ctrl_EV)
+    plot_data(output_file_base_EV, output_file_ctrl_EV, 'Average Power Consumption per Electric Vehicle', photo_file_EV, active_commands)
+    save_avg(output_file_base_EVSOC)
+    save_avg(output_file_ctrl_EVSOC)
+    plot_data(output_file_base_EVSOC, output_file_ctrl_EVSOC, 'Average State of Charge per Electric Vehicle', photo_file_EVSOC, active_commands)
 
 save_avg(output_file_base_total)
 save_avg(output_file_ctrl_total)

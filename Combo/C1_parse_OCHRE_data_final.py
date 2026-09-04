@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_HVAC_Dryer_TEST_2'
+input_file_root = 'Combo_WH_HVAC_Dryer_EV_TEST_2'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -86,6 +86,20 @@ if DRYER_SIMULATION == "ON":
     output_file_base_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_Dryer)
     output_file_ctrl_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_Dryer)
 
+if EV_SIMULATION == "ON":
+    output_append_EVpower = "_EV_power"
+    output_file_name_base_EV = input_file_name_base + output_append_EVpower + ".csv"
+    output_file_name_ctrl_EV = input_file_name_ctrl + output_append_EVpower + ".csv"
+    output_file_base_EV = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_EV)
+    output_file_ctrl_EV = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_EV)
+
+    output_append_EVSOC = "_EV_SOC"
+    output_file_name_base_EVSOC = input_file_name_base + output_append_EVSOC + ".csv"
+    output_file_name_ctrl_EVSOC = input_file_name_ctrl + output_append_EVSOC + ".csv"
+    output_file_base_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_EVSOC)
+    output_file_ctrl_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_EVSOC)
+
+
 output_append_totpower = "_total_power"
 output_file_name_base_total = input_file_name_base + output_append_totpower + ".csv"
 output_file_name_ctrl_total = input_file_name_ctrl + output_append_totpower + ".csv"
@@ -138,6 +152,9 @@ def process_data(input_file, output_file, wanted_col):
         cols.append('HVAC Cooling Electric Power (kW)')
     if DRYER_SIMULATION == "ON":
         cols.append('Clothes Dryer Electric Power (kW)')
+    if EV_SIMULATION == "ON":
+        cols.append('EV Electric Power (kW)')
+        cols.append('EV SOC (-)')
 
     #identify unwanted columns to drop
     unwanted_cols = cols.copy()
@@ -166,6 +183,11 @@ if DRYER_SIMULATION == "ON":
     process_data(input_file_base, output_file_base_Dryer, 'Clothes Dryer Electric Power (kW)')
     process_data(input_file_ctrl, output_file_ctrl_Dryer, 'Clothes Dryer Electric Power (kW)')
 
+if EV_SIMULATION == "ON":
+    process_data(input_file_base, output_file_base_EV, 'EV Electric Power (kW)')
+    process_data(input_file_ctrl, output_file_ctrl_EV, 'EV Electric Power (kW)')
+    process_data(input_file_base, output_file_base_EVSOC, 'EV SOC (-)')
+    process_data(input_file_ctrl, output_file_ctrl_EVSOC, 'EV SOC (-)')
 
 process_data(input_file_base, output_file_base_total, 'Total Electric Power (kW)')
 process_data(input_file_ctrl, output_file_ctrl_total, 'Total Electric Power (kW)')

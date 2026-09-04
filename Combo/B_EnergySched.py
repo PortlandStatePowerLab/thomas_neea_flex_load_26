@@ -13,20 +13,24 @@ import os
 import shutil
 import datetime as dt
 import pandas as pd
+import xml.etree.ElementTree as ET
+import re
+import copy
 from ochre import Dwelling
 from ochre.utils.schedule import ALL_SCHEDULE_NAMES
 import concurrent.futures
 from pathlib import Path
 import ochre
 import numpy as np
+import random
 
 #########################################
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_Dryer_TEST_2'
+filename = 'Combo_WH_HVAC_Dryer_EV_TEST_2'
 
-Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
+Input_folder = "Combo HPWH HVAC Dryer EV All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -114,6 +118,13 @@ HEAT_TinitF = 68
 dryer_duty_cycle_shed = 0.5
 dryer_duty_cycle_cp = 0.25
 dryer_duty_cycle_ge = 0
+
+# EV Control Settings
+DEFAULT_CHARGER_POWER_KW = 11.5 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
+DEFAULT_CAPACITY_KWH = 60.0 # Fallback capacity if missing from HPXML
+EV_SHED_PCT = 0.5
+EV_CP_PCT = 0.25
+EV_GE_PCT = 0
 
 
 # ---------------------------------------------------------
@@ -234,9 +245,9 @@ def create_home_schedule(base_sched, bins, home_idx):
 
             home_schedule[prefix] = (home_start_td, home_end_td)
 
-    print(home_idx)
-    print(bin_idx)
-    print(home_schedule)
+    # print(home_idx)
+    # print(bin_idx)
+    # print(home_schedule)
     return home_schedule
 
 
@@ -301,10 +312,68 @@ HEAT_TdeadbandC = f_to_c_DB(HEAT_TdeadbandF)
 HEAT_TinitC = f_to_c(HEAT_TinitF)
 
 #########################################
+# EV PARSER HELPERS
+#########################################
+
+def get_ev_charger_power(hpxml_path, default_kw=20):
+    """
+    Parses the home's HPXML file to determine the power the EV charger draws
+    """
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        
+        # Remove namespaces for easier tag matching
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+                
+        for charger in root.findall('.//ElectricVehicleCharger'):
+            charge_elem = charger.find('ChargingPower')
+            
+            if charge_elem is not None and charge_elem.text:
+                return float(charge_elem.text) / 1000
+                
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_kw}. Error: {e}")
+    
+    return default_kw
+
+def get_ev_capacity_or_range(hpxml_path, default_capacity_kwh=60.0):
+    """
+    Parses the home's HPXML file to determine the EV's usable or nominal battery capacity.
+    Returns capacity in kWh.
+    """
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        
+        # Remove namespaces for easier tag matching
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+                
+        # Search for Battery element under ElectricVehicle/Vehicle
+        for battery in root.findall('.//Battery'):
+            # Prefer UsableCapacity, fallback to NominalCapacity
+            usable = battery.find('UsableCapacity/Value')
+            if usable is not None and usable.text:
+                return float(usable.text)
+                
+            nominal = battery.find('NominalCapacity/Value')
+            if nominal is not None and nominal.text:
+                return float(nominal.text)
+                
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV capacity from {hpxml_path}. Using default {default_capacity_kwh} kWh. Error: {e}")
+        
+    return default_capacity_kwh
+
+#########################################
 # CONTROL FUNCTION
 #########################################
 
-def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
+def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_kw=None, **kwargs):
     # Initialize an empty control signal dictionary
     ctrl_signal = {}
 
@@ -387,6 +456,7 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
 
     # If a mode is active, apply its setpoints to the simulated devices
     if active_mode:
+        mode_name = active_mode[0]
         _, wh_sp, wh_db, ac_sp, ac_db, heat_sp, heat_db = active_mode
         
         if WH_SIMULATION == "ON":
@@ -397,8 +467,32 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, **kwargs):
                 ctrl_signal['HVAC Cooling'].update({'Setpoint': ac_sp, 'Deadband': ac_db})
             else:
                 ctrl_signal['HVAC Heating'].update({'Setpoint': heat_sp, 'Deadband': heat_db})
+                
+    # Add EV logic if simulated
+    if EV_SIMULATION == "ON" and home_charger_kw is not None:
+        ev_state = 'Normal'
+        if active_mode:
+            current_mode = active_mode[0]
+            if current_mode in ['S']:
+                ev_state = 'Shed'
+            elif current_mode in ['CP']:
+                ev_state = 'CP'
+            elif current_mode in ['GE']:
+                ev_state = 'GE'
+                
+        if ev_state == 'Shed':
+            fraction = EV_SHED_PCT
+        elif ev_state == 'CP':
+            fraction = EV_CP_PCT
+        elif ev_state == 'GE':
+            fraction = EV_GE_PCT
+        else:
+            fraction = 1.0
+            
+        ctrl_signal['EV'] = {'Max Power': abs(fraction * home_charger_kw)}
 
     return ctrl_signal
+
 
 #########################################
 # SCHEDULE FILTERING
@@ -431,9 +525,15 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
 
     df_sched = pd.read_csv(orig_sched_file)
 
-    # if OCHRE valid names filter strips everything, keep original columns
+    # if OCHRE valid names filter strips everything, keep original columns + EV variants
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
+    filtered_columns = [
+        col for col in df_sched.columns 
+        if col in valid_schedule_names 
+        or 'ev' in col.lower() 
+        or 'vehicle' in col.lower()
+        or 'plug' in col.lower()
+    ]
     
     if not filtered_columns:
         print(f"[WARNING] No columns matched ALL_SCHEDULE_NAMES for {home_path}. Retaining all original columns.")
@@ -545,6 +645,28 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
                 "Upper Node Weight": 0.75,
         }
 
+    home_charger_kw = None
+    if EV_SIMULATION == "ON":
+        home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
+        home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
+        
+        if home_charger_kw > 8:
+            home_charger = "Level 2"
+        else:
+            home_charger = "Level 1"
+            
+        equipment["EV"] = {
+            "vehicle_type": "BEV",
+            "capacity": home_ev_capacity,
+            "charging_level": home_charger,
+            "max_power": home_charger_kw
+        }
+
+    # Extract digits from the home folder name to use as a seed
+    home_name = os.path.basename(home_path)
+    home_num_str = re.sub(r'\D', '', home_name)
+    home_seed = int(home_num_str) if home_num_str else 0
+
     # 2. Remove "hpxml_schedule_file" from these shared arguments
     dwelling_args_local = {
         "start_time": Start,
@@ -553,13 +675,15 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         "hpxml_file": hpxml_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
-        # "initialization_time": 1,
+        "seed": home_seed,
         "Equipment": equipment
     }
 
     # --- Baseline Simulation ---
     # 3. Explicitly pass the baseline schedule file to the baseline dwelling
-    base_dwelling = Dwelling(name="Home Baseline", hpxml_schedule_file=base_sched_file, **dwelling_args_local)
+    random.seed(home_seed)
+    np.random.seed(home_seed)
+    base_dwelling = Dwelling(name="Home Baseline", hpxml_schedule_file=base_sched_file, **copy.deepcopy(dwelling_args_local))
     
     for t_base in base_dwelling.sim_times:
         # Build baseline control dynamically so we don't crash if things are OFF
@@ -570,13 +694,18 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         if HVAC_SIMULATION == "ON":
             base_ctrl["HVAC Cooling"] = {"Setpoint": AC_TbaselineC, "Deadband": AC_TdeadbandC, "Load Fraction": 1}
             base_ctrl["HVAC Heating"] = {"Setpoint": HEAT_TbaselineC, "Deadband": HEAT_TdeadbandC, "Load Fraction": 1}
+        
+        if EV_SIMULATION == "ON" and home_charger_kw is not None:
+            base_ctrl["EV"] = {"Max Power": home_charger_kw}
                 
         base_dwelling.update(control_signal=base_ctrl)
     df_base, _, _ = base_dwelling.finalize()
 
     # --- Controlled Simulation ---
     # 4. Explicitly pass the controlled (shifted) schedule file to the controlled dwelling
-    sim_dwelling = Dwelling(name="Home Controlled", hpxml_schedule_file=ctrl_sched_file, **dwelling_args_local)
+    random.seed(home_seed)
+    np.random.seed(home_seed)
+    sim_dwelling = Dwelling(name="Home Controlled", hpxml_schedule_file=ctrl_sched_file, **copy.deepcopy(dwelling_args_local))
     
     # Get HPWH unit only if WH_SIMULATION is ON
     hpwh_unit = None
@@ -589,8 +718,13 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         if hpwh_unit is not None:
             current_setpt = hpwh_unit.schedule.loc[sim_time, 'Water Heating Setpoint (C)']
             
-        control_cmd = determine_control(sim_time=sim_time, current_temp_c=current_setpt, home_schedule_td=schedule_cfg)
-        sim_dwelling.update(control_signal=control_cmd)
+        control_cmd = determine_control(sim_time=sim_time, current_temp_c=current_setpt, home_schedule_td=schedule_cfg, home_charger_kw=home_charger_kw)
+        
+        if control_cmd:
+            sim_dwelling.update(control_signal=control_cmd)
+        else:
+            sim_dwelling.update()
+            
     df_ctrl, _, _ = sim_dwelling.finalize()
 
     # --- Formatting Output ---
@@ -605,6 +739,9 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         CTRL_COLS.extend(["HVAC Heating Electric Power (kW)", "HVAC Cooling Electric Power (kW)"])
     if DRYER_SIMULATION == "ON":
         CTRL_COLS.append("Clothes Dryer Electric Power (kW)")
+    if EV_SIMULATION == "ON":
+        CTRL_COLS.append("EV Electric Power (kW)")
+        CTRL_COLS.append("EV SOC (-)")
     
     # Keep only the columns that actually exist in the DataFrame
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
@@ -694,12 +831,14 @@ if __name__ == "__main__":
     # $ grep -rn "read_psm3(" .
     # ./ochre/utils/schedule.py:186:        df, location = pvlib.iotools.read_psm3(weather_file, map_variables=True)
     # Change to read_nsrdb_psm4 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
         futures = []
         for home in homes:
             # Extract digits from the home folder name to use as a unique ID
             home_basename = os.path.basename(home)
-            home_num = sum(int(c) for c in home_basename if c.isdigit())
+            # home_num = sum(int(c) for c in home_basename if c.isdigit())
+            home_num_str = re.sub(r'\D', '', home_basename)
+            home_num = int(home_num_str) if home_num_str else 0
             
             # Generate the exact shifted timedeltas for THIS specific home
             home_sched_td = create_home_schedule(my_schedule1, bins=bins, home_idx=home_num)
@@ -744,4 +883,5 @@ def aggregate_results(homes, work_dir):
     
     print(f"Aggregated CSVs written! {count}")
 
-aggregate_results(homes, WORKING_DIR)
+if __name__ == "__main__":
+    aggregate_results(homes, WORKING_DIR)
