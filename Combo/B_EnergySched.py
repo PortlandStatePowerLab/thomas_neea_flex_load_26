@@ -28,7 +28,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_Dryer_EV_TEST_2'
+filename = 'Combo_WH_HVAC_Dryer_EV_TEST_8'
 
 Input_folder = "Combo HPWH HVAC Dryer EV All Input Files"
 
@@ -53,7 +53,7 @@ CSV_ADDRESS = "in.schedules.csv"
 
 
 # Simulation parameters
-Start = dt.datetime(2018, 8, 11, 0, 0)
+Start = dt.datetime(2018, 8, 21, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
@@ -488,8 +488,12 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_k
             fraction = EV_GE_PCT
         else:
             fraction = 1.0
+
+        # Prevent absolute zero to avoid division by zero in OCHRE
+        commanded_kw = abs(fraction * home_charger_kw)
+        safe_kw = max(commanded_kw, 0.001)
             
-        ctrl_signal['EV'] = {'Max Power': abs(fraction * home_charger_kw)}
+        ctrl_signal['EV'] = {'Max Power': safe_kw}
 
     return ctrl_signal
 
@@ -503,8 +507,25 @@ def filter_schedules(home_path):
     filtered_sched_file = os.path.join(home_path, 'filtered_schedules.csv')
 
     df_sched = pd.read_csv(orig_sched_file)
+    
+    # NEW FIX: Inject the EV charging schedule if missing
+    if 'electric_vehicle_charging' not in df_sched.columns:
+        # A value of 1 means the EV is plugged in and available. 
+        # A value of 0 means the EV is disconnected (driving).
+        # This defaults to always plugged in. You can replace 1.0 with a custom profile if needed.
+        df_sched['electric_vehicle_charging'] = 1.0
+
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
+    
+    # Catch any variation of EV / Vehicle schedules
+    filtered_columns = [
+        col for col in df_sched.columns 
+        if col in valid_schedule_names 
+        or 'ev' in col.lower() 
+        or 'vehicle' in col.lower()
+        or 'plug' in col.lower()
+    ]
+    
     dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
     if dropped_columns:
         print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
@@ -794,6 +815,8 @@ def remove_first_day(df, start_date):
 # MAIN EXECUTION
 #########################################
 
+failcount = 0
+
 if __name__ == "__main__":
     # Ensure working folders exist
     os.makedirs(INPUT_DIR, exist_ok=True)
@@ -850,7 +873,8 @@ if __name__ == "__main__":
             try:
                 f.result()  # forces execution and raises exceptions if any
             except Exception as e:
-                print("Simulation failed:", e)
+                failcount += 1
+                print("Simulation failed:", e, failcount)
 
     print("All simulations complete!")
 
