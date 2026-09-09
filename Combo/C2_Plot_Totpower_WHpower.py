@@ -19,7 +19,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_HVAC_Dryer_EV_TEST_8'
+input_file_root = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_2'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -87,6 +87,19 @@ if EV_SIMULATION == "ON":
     output_file_base_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_EVSOC)
     output_file_ctrl_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_EVSOC)
 
+if BATTERY_SIMULATION == "ON":
+    output_append_BATTpower = "_BATT_power"
+    output_file_name_base_BATT = input_file_name_base + output_append_BATTpower + ".csv"
+    output_file_name_ctrl_BATT = input_file_name_ctrl + output_append_BATTpower + ".csv"
+    output_file_base_BATT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_BATT)
+    output_file_ctrl_BATT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_BATT)
+
+    output_append_BATTSOC = "_BATT_SOC"
+    output_file_name_base_BATTSOC = input_file_name_base + output_append_BATTSOC + ".csv"
+    output_file_name_ctrl_BATTSOC = input_file_name_ctrl + output_append_BATTSOC + ".csv"
+    output_file_base_BATTSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_BATTSOC)
+    output_file_ctrl_BATTSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_BATTSOC)
+
 output_append_totpower = "_total_power"
 output_file_name_base_total = input_file_name_base + output_append_totpower + ".csv"
 output_file_name_ctrl_total = input_file_name_ctrl + output_append_totpower + ".csv"
@@ -100,6 +113,8 @@ photo_file_HEAT = os.path.join(working_dir, "Ready_data", input_file_root, input
 photo_file_Dryer = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_Dryer_power_plot.png")
 photo_file_EV = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_EV_power_plot.png")
 photo_file_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_EV_SOC_plot.png")
+photo_file_BATT = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_BATT_power_plot.png")
+photo_file_BATTSOC = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_BATT_SOC_plot.png")
 photo_file_total = os.path.join(working_dir, "Ready_data", input_file_root, input_file_root + "_total_power_plot.png")
 
 
@@ -235,6 +250,14 @@ if EV_SIMULATION == "ON":
     save_avg(output_file_base_EVSOC)
     save_avg(output_file_ctrl_EVSOC)
     plot_data(output_file_base_EVSOC, output_file_ctrl_EVSOC, 'Average State of Charge per Electric Vehicle', photo_file_EVSOC, active_commands)
+
+if BATTERY_SIMULATION == "ON":
+    save_avg(output_file_base_BATT)
+    save_avg(output_file_ctrl_BATT)
+    plot_data(output_file_base_BATT, output_file_ctrl_BATT, 'Average Power Consumption per Battery', photo_file_BATT, active_commands)
+    save_avg(output_file_base_BATTSOC)
+    save_avg(output_file_ctrl_BATTSOC)
+    plot_data(output_file_base_BATTSOC, output_file_ctrl_BATTSOC, 'Average State of Charge per Battery', photo_file_BATTSOC, active_commands)
 
 save_avg(output_file_base_total)
 save_avg(output_file_ctrl_total)

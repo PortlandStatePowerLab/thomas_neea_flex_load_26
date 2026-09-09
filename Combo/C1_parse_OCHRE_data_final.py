@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_HVAC_Dryer_EV_TEST_8'
+input_file_root = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_2'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -99,6 +99,19 @@ if EV_SIMULATION == "ON":
     output_file_base_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_EVSOC)
     output_file_ctrl_EVSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_EVSOC)
 
+if BATTERY_SIMULATION == "ON":
+    output_append_BATTpower = "_BATT_power"
+    output_file_name_base_BATT = input_file_name_base + output_append_BATTpower + ".csv"
+    output_file_name_ctrl_BATT = input_file_name_ctrl + output_append_BATTpower + ".csv"
+    output_file_base_BATT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_BATT)
+    output_file_ctrl_BATT = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_BATT)
+
+    output_append_BATTSOC = "_BATT_SOC"
+    output_file_name_base_BATTSOC = input_file_name_base + output_append_BATTSOC + ".csv"
+    output_file_name_ctrl_BATTSOC = input_file_name_ctrl + output_append_BATTSOC + ".csv"
+    output_file_base_BATTSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_base_BATTSOC)
+    output_file_ctrl_BATTSOC = os.path.join(working_dir, "Ready_data", input_file_root, output_file_name_ctrl_BATTSOC)
+
 
 output_append_totpower = "_total_power"
 output_file_name_base_total = input_file_name_base + output_append_totpower + ".csv"
@@ -155,6 +168,9 @@ def process_data(input_file, output_file, wanted_col):
     if EV_SIMULATION == "ON":
         cols.append('EV Electric Power (kW)')
         cols.append('EV SOC (-)')
+    if BATTERY_SIMULATION == "ON":
+        cols.append("Battery Electric Power (kW)")
+        cols.append("Battery SOC (-)")
 
     #identify unwanted columns to drop
     unwanted_cols = cols.copy()
@@ -188,6 +204,12 @@ if EV_SIMULATION == "ON":
     process_data(input_file_ctrl, output_file_ctrl_EV, 'EV Electric Power (kW)')
     process_data(input_file_base, output_file_base_EVSOC, 'EV SOC (-)')
     process_data(input_file_ctrl, output_file_ctrl_EVSOC, 'EV SOC (-)')
+
+if BATTERY_SIMULATION == "ON":
+    process_data(input_file_base, output_file_base_BATT, 'Battery Electric Power (kW)')
+    process_data(input_file_ctrl, output_file_ctrl_BATT, 'Battery Electric Power (kW)')
+    process_data(input_file_base, output_file_base_BATTSOC, 'Battery SOC (-)')
+    process_data(input_file_ctrl, output_file_ctrl_BATTSOC, 'Battery SOC (-)')
 
 process_data(input_file_base, output_file_base_total, 'Total Electric Power (kW)')
 process_data(input_file_ctrl, output_file_ctrl_total, 'Total Electric Power (kW)')

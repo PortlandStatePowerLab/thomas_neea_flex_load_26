@@ -28,9 +28,9 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_Dryer_EV_TEST_8'
+filename = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_2'
 
-Input_folder = "Combo HPWH HVAC Dryer EV All Input Files"
+Input_folder = "Combo HPWH HVAC Dryer EV Almost All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -125,6 +125,25 @@ DEFAULT_CAPACITY_KWH = 60.0 # Fallback capacity if missing from HPXML
 EV_SHED_PCT = 0.5
 EV_CP_PCT = 0.25
 EV_GE_PCT = 0
+
+# Battery Control Settings
+BATTERY_PARAMS = {
+    "capacity_kwh": 10,         # Usable energy capacity in kWh
+    "capacity": 5.0,            # Max continuous power rating in kW
+    "efficiency": 0.98,         # Discharging efficiency
+    "efficiency_charge": 0.98,  # Charging efficiency
+    "soc_init": 0.5,            # Start at 50% SOC
+    "soc_min": 0.0,             # Minimum allowable SOC
+    "soc_max": 1.0,             # Maximum allowable SOC
+}
+
+# Control commands in kW (+ is charging/Load Up, - is discharging/Shed)
+P_Battery_ALU_KW = 1.0         # Charge battery ALU
+P_Battery_LU_KW = 0.25         # Charge battery LU
+P_Battery_SHED_KW = -0.25      # Discharge battery Shed
+P_Battery_CP_KW = -0.5         # Discharge battery CP
+P_Battery_GE_KW = -1.0         # Discharge battery GE
+P_Battery_IDLE_KW = 0.0        # Idle
 
 
 # ---------------------------------------------------------
@@ -423,6 +442,12 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_k
             'Load Fraction': 1  # 1 = Normal schedule operation
         }
 
+    # Add batteries if simulated
+    if BATTERY_SIMULATION == "ON":
+        ctrl_signal['Battery'] = {
+            'P Setpoint': P_Battery_IDLE_KW
+        }
+
 
     midnight = pd.to_datetime(sim_time.date())
 
@@ -494,6 +519,37 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_k
         safe_kw = max(commanded_kw, 0.001)
             
         ctrl_signal['EV'] = {'Max Power': safe_kw}
+
+    # Add battery logic if simulated
+    if BATTERY_SIMULATION == "ON":
+        battery_state = 'Normal'
+        if active_mode:
+            current_mode = active_mode[0]
+            if current_mode in ['ALU']:
+                battery_state = 'ALU'
+            elif current_mode in ['LU']:
+                battery_state = 'LU'
+            elif current_mode in ['S']:
+                battery_state = 'Shed'
+            elif current_mode in ['CP']:
+                battery_state = 'CP'
+            elif current_mode in ['GE']:
+                battery_state = 'GE'
+
+        if battery_state == 'ALU':
+            battery_p = P_Battery_ALU_KW
+        elif battery_state == 'LU':
+            battery_p = P_Battery_LU_KW
+        elif battery_state == 'Shed':
+            battery_p = P_Battery_SHED_KW
+        elif battery_state == 'CP':
+            battery_p = P_Battery_CP_KW
+        elif battery_state == 'GE':
+            battery_p = P_Battery_GE_KW
+        else:
+            battery_p = P_Battery_IDLE_KW
+
+        ctrl_signal['Battery'] = {'P Setpoint': battery_p}
 
     return ctrl_signal
 
@@ -666,6 +722,9 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
                 "Upper Node Weight": 0.75,
         }
 
+    if BATTERY_SIMULATION == "ON":
+        equipment["Battery"] = BATTERY_PARAMS
+
     home_charger_kw = None
     if EV_SIMULATION == "ON":
         home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
@@ -763,6 +822,9 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     if EV_SIMULATION == "ON":
         CTRL_COLS.append("EV Electric Power (kW)")
         CTRL_COLS.append("EV SOC (-)")
+    if BATTERY_SIMULATION == "ON":
+        CTRL_COLS.append("Battery Electric Power (kW)")
+        CTRL_COLS.append("Battery SOC (-)")
     
     # Keep only the columns that actually exist in the DataFrame
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
