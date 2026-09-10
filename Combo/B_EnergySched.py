@@ -58,7 +58,7 @@ Duration = 2  # days
 t_res = 15  # minutes
 
 
-# HPWH control parameters (°F)
+# WH control parameters (°F)
 # GE - Grid Emergency, CP - Critical Peak, Shed
 WH_Tcontrol_GEF = 90
 WH_Tcontrol_GEdeadbandF = 10
@@ -129,7 +129,7 @@ EV_GE_PCT = 0
 # Battery Control Settings
 BATTERY_PARAMS = {
     "capacity_kwh": 10,         # Usable energy capacity in kWh
-    "capacity": 5.0,            # Max continuous power rating in kW
+    "capacity": 1.0,            # Max continuous power rating in kW
     "efficiency": 0.98,         # Discharging efficiency
     "efficiency_charge": 0.98,  # Charging efficiency
     "soc_init": 0.5,            # Start at 50% SOC
@@ -138,12 +138,12 @@ BATTERY_PARAMS = {
 }
 
 # Control commands in kW (+ is charging/Load Up, - is discharging/Shed)
-P_Battery_ALU_KW = 1.0         # Charge battery ALU
-P_Battery_LU_KW = 0.25         # Charge battery LU
-P_Battery_SHED_KW = -0.25      # Discharge battery Shed
-P_Battery_CP_KW = -0.5         # Discharge battery CP
-P_Battery_GE_KW = -1.0         # Discharge battery GE
-P_Battery_IDLE_KW = 0.0        # Idle
+P_Battery_ALU_KW = 1.0 * BATTERY_PARAMS['capacity']        # Charge battery ALU
+P_Battery_LU_KW = 0.25 * BATTERY_PARAMS['capacity']        # Charge battery LU
+P_Battery_SHED_KW = -0.25 * BATTERY_PARAMS['capacity']     # Discharge battery Shed
+P_Battery_CP_KW = -0.5 * BATTERY_PARAMS['capacity']        # Discharge battery CP
+P_Battery_GE_KW = -1.0 * BATTERY_PARAMS['capacity']        # Discharge battery GE
+P_Battery_IDLE_KW = 0.0                                    # Idle
 
 
 # ---------------------------------------------------------
