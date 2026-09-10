@@ -1,6 +1,6 @@
 """
 Author: Thomas Metzler
-Created: 8/13/26
+Created: 9/10/26
 Adjusts load up and shed commands to keep power consumption at a constant level.
 """
 
@@ -42,22 +42,83 @@ Start = dt.datetime(2018, 8, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
+# ---------------------------------------------------------
+# LOAD SHAPING CONTROLS FROM CSV
+# ---------------------------------------------------------
+controls_file = os.path.join(script_dir, "B0_Load_Shaping_Controls_2.csv")
+
+# Defaults in case of failure or missing values
+hourly_setpoints = {h: "OFF" for h in range(24)}
+AVERAGE_DEADBAND_KW = 0.1
+KP, KI, KD = 1.0, 1.0, 1.0
+COMMAND_PRIORITY = ['DRYER', 'EV', 'HVAC', 'WH', 'BATTERY']
+ALLOWED_COMMANDS = []
+
+try:
+    # Read the first two columns, skipping the header
+    df_ctrls = pd.read_csv(controls_file, usecols=[0, 1], names=['Command', 'Value'], skiprows=1)
+    df_ctrls = df_ctrls.dropna(subset=['Command'])
+    
+    COMMAND_PRIORITY_TEMP = []
+    ALLOWED_COMMANDS_TEMP = []
+    
+    for idx, row in df_ctrls.iterrows():
+        cmd = str(row['Command']).strip()
+        val = str(row['Value']).strip()
+        
+        # 1. Parse hourly setpoints (e.g., "0:00")
+        if ':' in cmd:
+            hour = int(cmd.split(':')[0])
+            hourly_setpoints[hour] = val
+            
+        # 2. Parse deadband power
+        elif cmd.lower() == 'deadband power':
+            AVERAGE_DEADBAND_KW = float(val)
+            
+        # 3. Parse priority devices (1 through 5)
+        elif cmd.lower().startswith('priority device'):
+            COMMAND_PRIORITY_TEMP.append(val.upper())
+            
+        # 4. Parse allowed commands (ALU, LU, SHED, CP, GE)
+        elif cmd in ['ALU', 'LU', 'SHED', 'CP', 'GE']:
+            if val.upper() == 'ON':
+                ALLOWED_COMMANDS_TEMP.append(cmd)
+                
+        # 5. Parse PID Controller Gains
+        elif cmd == 'KP':
+            KP = float(val)
+        elif cmd == 'KI':
+            KI = float(val)
+        elif cmd == 'KD':
+            KD = float(val)
+            
+    # Apply successfully parsed lists
+    if COMMAND_PRIORITY_TEMP:
+        COMMAND_PRIORITY = COMMAND_PRIORITY_TEMP
+    if ALLOWED_COMMANDS_TEMP:
+        ALLOWED_COMMANDS = ALLOWED_COMMANDS_TEMP
+        
+except Exception as e:
+    print(f"[WARNING] Could not load fully from {controls_file}. Using defaults where missing. Error: {e}")
+    
 # --- GLOBAL VPP EVENT SETTINGS ---
 # Define the time window for active load shaping
-VPP_START_TIME = dt.time(14, 0)
-VPP_END_TIME = dt.time(23, 0)
+# (Replaced by dynamic hourly setpoints from CSV)
+# VPP_START_TIME = dt.time(14, 0)
+# VPP_END_TIME = dt.time(23, 0)
 
 # Fleet-agnostic average power targets
-AVERAGE_SETPOINT_KW = 1.9     # Target average power PER HOME during VPP event
-AVERAGE_DEADBAND_KW = 0.01     # Tolerance PER HOME to prevent constant toggling
+# AVERAGE_SETPOINT_KW = 1.9     # Target average power PER HOME during VPP event (Now dynamic)
+# AVERAGE_DEADBAND_KW = 0.01     # Tolerance PER HOME to prevent constant toggling (Loaded from CSV)
 ESTIMATED_LOAD_KW = 0.5       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
 ESTIMATED_SHED_KW = 0.3       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
-KP = 2.0                      # Proportional gain
-KI = 0.1                      # Integral gain
-KD = 0.1                      # Derivative gain
+# (Loaded from CSV)
+# KP = 2.0                      # Proportional gain
+# KI = 0.1                      # Integral gain
+# KD = 0.1                      # Derivative gain
 
 # WH control parameters (°F)
 # GE - Grid Emergency, CP - Critical Peak, Shed
@@ -148,7 +209,7 @@ P_Battery_IDLE_KW = 0.0                                    # Idle
 
 
 # ---------------------------------------------------------
-# LOAD DEVICES AND CONTROLS FROM CSVS
+# LOAD DEVICES FROM CSV
 # ---------------------------------------------------------
 
 devices_file = os.path.join(script_dir, "B0_Devices.csv")
@@ -166,8 +227,55 @@ DRYER_SIMULATION = device_sim_map.get("Dryer", "OFF")
 EV_SIMULATION = device_sim_map.get("EV", "OFF")
 BATTERY_SIMULATION = device_sim_map.get("Battery", "OFF")
 
+# ---------------------------------------------------------
+# LOAD SHAPING CONTROLS FROM CSV
+# ---------------------------------------------------------
+controls_file = os.path.join(script_dir, "B0_Load_Shaping_Controls_3.csv")
 
-controls_file = os.path.join(script_dir, "B0_Load_Shaping_Controls.csv")
+# Defaults in case of failure or missing values
+hourly_setpoints = {h: "OFF" for h in range(24)}
+AVERAGE_DEADBAND_KW = 0.01
+KP, KI, KD = 2.0, 0.1, 0.1
+COMMAND_PRIORITY = ['DRYER', 'EV', 'HVAC', 'WH', 'BATTERY']
+ALLOWED_COMMANDS = []
+
+try:
+    # Read the first two columns, skipping the header
+    df_ctrls = pd.read_csv(controls_file, usecols=[0, 1], names=['Command', 'Value'], skiprows=1)
+    df_ctrls = df_ctrls.dropna(subset=['Command'])
+    
+    COMMAND_PRIORITY_TEMP = []
+    ALLOWED_COMMANDS_TEMP = []
+    
+    for idx, row in df_ctrls.iterrows():
+        cmd = str(row['Command']).strip()
+        val = str(row['Value']).strip()
+        
+        # Check if the command is a time string like "0:00"
+        if ':' in cmd:
+            hour = int(cmd.split(':')[0])
+            hourly_setpoints[hour] = val
+        elif cmd.lower() == 'deadband':
+            AVERAGE_DEADBAND_KW = float(val)
+        elif cmd.startswith('Priority'):
+            COMMAND_PRIORITY_TEMP.append(val)
+        elif cmd in ['ALU', 'LU', 'SHED', 'CP', 'GE']:
+            if val.upper() == 'ON':
+                ALLOWED_COMMANDS_TEMP.append(cmd)
+        elif cmd == 'KP':
+            KP = float(val)
+        elif cmd == 'KI':
+            KI = float(val)
+        elif cmd == 'KD':
+            KD = float(val)
+            
+    if COMMAND_PRIORITY_TEMP:
+        COMMAND_PRIORITY = COMMAND_PRIORITY_TEMP
+    if ALLOWED_COMMANDS_TEMP:
+        ALLOWED_COMMANDS = ALLOWED_COMMANDS_TEMP
+        
+except Exception as e:
+    print(f"[WARNING] Could not load fully from {controls_file}. Using defaults where missing. Error: {e}")
 
 
 
@@ -366,21 +474,21 @@ def determine_hpwh_control(global_mode="NORMAL"):
     """
     ctrl_signal = {
         'Water Heating': {
-            'Setpoint': TbaselineC,
-            'Deadband': TdeadbandC,
+            'Setpoint': WH_TbaselineC,
+            'Deadband': WH_TdeadbandC,
             'Load Fraction': 1,
         }
     }
 
     if global_mode == "SHED":
         ctrl_signal['Water Heating'].update({
-            'Setpoint': Tcontrol_SHEDC,
-            'Deadband': Tcontrol_deadbandC
+            'Setpoint': WH_Tcontrol_SHEDC,
+            'Deadband': WH_Tcontrol_deadbandC
         })
     elif global_mode == "LOAD":
         ctrl_signal['Water Heating'].update({
-            'Setpoint': Tcontrol_LOADC,
-            'Deadband': Tcontrol_LOADdeadbandC
+            'Setpoint': WH_Tcontrol_LOADC,
+            'Deadband': WH_Tcontrol_LOADdeadbandC
         })
 
     return ctrl_signal
@@ -399,7 +507,7 @@ def initialize_home(home_path, weather_file_path):
         "verbosity": 7,
         "Equipment": {
             "Water Heating": {
-                "Initial Temperature (C)": TinitC, 
+                "Initial Temperature (C)": WH_TinitC, 
                 "hp_only_mode": True,
                 "Max Tank Temperature": 70,
                 "Upper Node": 3,
@@ -481,11 +589,16 @@ if __name__ == "__main__":
     print("Starting Co-Simulation Time Loop...")
     for sim_time in sim_times:
         current_time_of_day = sim_time.time()
+        current_hour = current_time_of_day.hour
         
-        # Check if we are inside the VPP event window
-        is_vpp_active = VPP_START_TIME <= current_time_of_day < VPP_END_TIME
+        # Determine VPP state from the CSV schedule
+        hourly_val = hourly_setpoints.get(current_hour, "OFF")
+        is_vpp_active = str(hourly_val).upper() != "OFF"
 
         if is_vpp_active:
+            # Set the new dynamic target
+            AVERAGE_SETPOINT_KW = float(hourly_val)
+            
             # --- Active Load Shaping Dispatch Logic (Bidirectional & Asymmetrical) ---
             # PID error calculation: Error = Setpoint - Actual
             error = AVERAGE_SETPOINT_KW - average_power_kw
@@ -577,7 +690,7 @@ if __name__ == "__main__":
             sim_dw = home_data["sim"]
             
             # 1. Baseline Update
-            base_ctrl = {"Water Heating": {"Setpoint": TbaselineC, "Deadband": TdeadbandC, "Load Fraction": 1}}
+            base_ctrl = {"Water Heating": {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1}}
             base_dw.update(control_signal=base_ctrl)
             
            # 2. Controlled Update (driven purely by the VPP state now)
