@@ -28,7 +28,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_2'
+filename = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_3'
 
 Input_folder = "Combo HPWH HVAC Dryer EV Almost All Input Files"
 
@@ -53,7 +53,7 @@ CSV_ADDRESS = "in.schedules.csv"
 
 
 # Simulation parameters
-Start = dt.datetime(2018, 8, 21, 0, 0)
+Start = dt.datetime(2018, 8, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
@@ -75,6 +75,10 @@ WH_Tcontrol_LOADdeadbandF = 2
 WH_TbaselineF = 130
 WH_TdeadbandF = 7
 WH_Tinit = 130
+
+# Response time in seconds
+WH_RESPONSE_MIN = 30
+WH_RESPONSE_MAX = 90
 
 count = 0
 
@@ -113,6 +117,10 @@ HEAT_Tcontrol_LOADdeadbandF = 2
 HEAT_TbaselineF = 68
 HEAT_TdeadbandF = 2
 HEAT_TinitF = 68
+
+# Response time in seconds
+HVAC_RESPONSE_MIN = 30
+HVAC_RESPONSE_MAX = 90
 
 # Dryer duty cycle parameters, dryers can't load up only curtail power
 dryer_duty_cycle_shed = 0.5
@@ -392,8 +400,13 @@ def get_ev_capacity_or_range(hpxml_path, default_capacity_kwh=60.0):
 # CONTROL FUNCTION
 #########################################
 
-def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_kw=None, **kwargs):
-    # Initialize an empty control signal dictionary
+def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_kw=None, 
+                      wh_delay=None, hvac_delay=None, **kwargs):
+    # Default offsets to 0 seconds if not provided
+    wh_delay = wh_delay if wh_delay is not None else pd.Timedelta(seconds=0)
+    hvac_delay = hvac_delay if hvac_delay is not None else pd.Timedelta(seconds=0)
+
+    # Initialize control signal dictionary
     ctrl_signal = {}
 
     # Add Water Heating if simulated
@@ -461,98 +474,71 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_k
         ('GE',  WH_Tcontrol_GEC, WH_Tcontrol_GEdeadbandC, AC_Tcontrol_GEC, AC_Tcontrol_GEdeadbandC, HEAT_Tcontrol_GEC, HEAT_Tcontrol_GEdeadbandC)
     ]
 
-    active_mode = None
-
-    # Check schedules to see if a mode is currently active
-    for mode_data in modes:
-        mode_name = mode_data[0]
-        
-        # Check Morning
-        m_start, m_end = home_schedule_td[f'M_{mode_name}']
-        if (midnight + m_start) <= sim_time < (midnight + m_end):
-            active_mode = mode_data
-            break
-
-        # Check Evening
-        e_start, e_end = home_schedule_td[f'E_{mode_name}']
-        if (midnight + e_start) <= sim_time < (midnight + e_end):
-            active_mode = mode_data
-            break
-
-    # If a mode is active, apply its setpoints to the simulated devices
-    if active_mode:
-        mode_name = active_mode[0]
-        _, wh_sp, wh_db, ac_sp, ac_db, heat_sp, heat_db = active_mode
-        
-        if WH_SIMULATION == "ON":
-            ctrl_signal['Water Heating'].update({'Setpoint': wh_sp, 'Deadband': wh_db})
+    # Helper function to evaluate active mode given a specific device delay
+    def get_active_mode_for_delay(delay_td):
+        for mode_data in modes:
+            mode_name = mode_data[0]
             
-        if HVAC_SIMULATION == "ON":
-            if is_cooling_season:
-                ctrl_signal['HVAC Cooling'].update({'Setpoint': ac_sp, 'Deadband': ac_db})
-            else:
-                ctrl_signal['HVAC Heating'].update({'Setpoint': heat_sp, 'Deadband': heat_db})
-                
-    # Add EV logic if simulated
+            # Check Morning with delay offset
+            m_start, m_end = home_schedule_td[f'M_{mode_name}']
+            if (midnight + m_start + delay_td) <= sim_time < (midnight + m_end + delay_td):
+                return mode_data
+
+            # Check Evening with delay offset
+            e_start, e_end = home_schedule_td[f'E_{mode_name}']
+            if (midnight + e_start + delay_td) <= sim_time < (midnight + e_end + delay_td):
+                return mode_data
+        return None
+
+    # Evaluate device-specific active modes
+    wh_mode = get_active_mode_for_delay(wh_delay)
+    hvac_mode = get_active_mode_for_delay(hvac_delay)
+    base_mode = get_active_mode_for_delay(pd.Timedelta(seconds=0)) # For EV and Battery
+
+    # Apply WH setpoints
+    if WH_SIMULATION == "ON" and wh_mode:
+        _, wh_sp, wh_db, _, _, _, _ = wh_mode
+        ctrl_signal['Water Heating'].update({'Setpoint': wh_sp, 'Deadband': wh_db})
+
+    # Apply HVAC setpoints
+    if HVAC_SIMULATION == "ON" and hvac_mode:
+        _, _, _, ac_sp, ac_db, heat_sp, heat_db = hvac_mode
+        if is_cooling_season:
+            ctrl_signal['HVAC Cooling'].update({'Setpoint': ac_sp, 'Deadband': ac_db})
+        else:
+            ctrl_signal['HVAC Heating'].update({'Setpoint': heat_sp, 'Deadband': heat_db})
+
+    # Add EV logic based on unshifted/base schedule
     if EV_SIMULATION == "ON" and home_charger_kw is not None:
         ev_state = 'Normal'
-        if active_mode:
-            current_mode = active_mode[0]
-            if current_mode in ['S']:
+        if base_mode:
+            current_mode = base_mode[0]
+            if current_mode == 'S':
                 ev_state = 'Shed'
-            elif current_mode in ['CP']:
+            elif current_mode == 'CP':
                 ev_state = 'CP'
-            elif current_mode in ['GE']:
+            elif current_mode == 'GE':
                 ev_state = 'GE'
-                
-        if ev_state == 'Shed':
-            fraction = EV_SHED_PCT
-        elif ev_state == 'CP':
-            fraction = EV_CP_PCT
-        elif ev_state == 'GE':
-            fraction = EV_GE_PCT
-        else:
-            fraction = 1.0
 
-        # Prevent absolute zero to avoid division by zero in OCHRE
+        # Prevent divide by zero error        
+        fraction = EV_SHED_PCT if ev_state == 'Shed' else (EV_CP_PCT if ev_state == 'CP' else (EV_GE_PCT if ev_state == 'GE' else 1.0))
         commanded_kw = abs(fraction * home_charger_kw)
-        safe_kw = max(commanded_kw, 0.001)
-            
-        ctrl_signal['EV'] = {'Max Power': safe_kw}
+        ctrl_signal['EV'] = {'Max Power': max(commanded_kw, 0.001)}
 
-    # Add battery logic if simulated
+    # Add battery logic base schedule
     if BATTERY_SIMULATION == "ON":
-        battery_state = 'Normal'
-        if active_mode:
-            current_mode = active_mode[0]
-            if current_mode in ['ALU']:
-                battery_state = 'ALU'
-            elif current_mode in ['LU']:
-                battery_state = 'LU'
-            elif current_mode in ['S']:
-                battery_state = 'Shed'
-            elif current_mode in ['CP']:
-                battery_state = 'CP'
-            elif current_mode in ['GE']:
-                battery_state = 'GE'
-
-        if battery_state == 'ALU':
-            battery_p = P_Battery_ALU_KW
-        elif battery_state == 'LU':
-            battery_p = P_Battery_LU_KW
-        elif battery_state == 'Shed':
-            battery_p = P_Battery_SHED_KW
-        elif battery_state == 'CP':
-            battery_p = P_Battery_CP_KW
-        elif battery_state == 'GE':
-            battery_p = P_Battery_GE_KW
-        else:
-            battery_p = P_Battery_IDLE_KW
-
+        battery_state = base_mode[0] if base_mode else 'Normal'
+        battery_p_map = {
+            'ALU': P_Battery_ALU_KW,
+            'LU': P_Battery_LU_KW,
+            'S': P_Battery_SHED_KW,
+            'CP': P_Battery_CP_KW,
+            'GE': P_Battery_GE_KW
+        }
+        battery_p = battery_p_map.get(battery_state, P_Battery_IDLE_KW)
         ctrl_signal['Battery'] = {'P Setpoint': battery_p}
 
     return ctrl_signal
-
 
 #########################################
 # SCHEDULE FILTERING
@@ -781,6 +767,13 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         base_dwelling.update(control_signal=base_ctrl)
     df_base, _, _ = base_dwelling.finalize()
 
+    # Generate random response time delays for WH and HVAC for this home
+    wh_delay_sec = random.uniform(WH_RESPONSE_MIN, WH_RESPONSE_MAX)
+    hvac_delay_sec = random.uniform(HVAC_RESPONSE_MIN, HVAC_RESPONSE_MAX)
+    
+    wh_delay = pd.Timedelta(seconds=wh_delay_sec)
+    hvac_delay = pd.Timedelta(seconds=hvac_delay_sec)
+
     # --- Controlled Simulation ---
     # 4. Explicitly pass the controlled (shifted) schedule file to the controlled dwelling
     random.seed(home_seed)
@@ -798,7 +791,14 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
         if hpwh_unit is not None:
             current_setpt = hpwh_unit.schedule.loc[sim_time, 'Water Heating Setpoint (C)']
             
-        control_cmd = determine_control(sim_time=sim_time, current_temp_c=current_setpt, home_schedule_td=schedule_cfg, home_charger_kw=home_charger_kw)
+        control_cmd = determine_control(
+            sim_time=sim_time, 
+            current_temp_c=current_setpt, 
+            home_schedule_td=schedule_cfg, 
+            home_charger_kw=home_charger_kw,
+            wh_delay=wh_delay,
+            hvac_delay=hvac_delay
+        )
         
         if control_cmd:
             sim_dwelling.update(control_signal=control_cmd)
