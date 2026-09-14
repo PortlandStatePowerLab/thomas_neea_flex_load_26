@@ -19,8 +19,8 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'HPWH_Test_Loadshape_10'
-Input_folder = "HPWH All Input Files 2"
+filename = 'COMBO_WH_Loadshape_1'
+Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -42,65 +42,7 @@ Start = dt.datetime(2018, 8, 11, 0, 0)
 Duration = 2  # days
 t_res = 15  # minutes
 
-# ---------------------------------------------------------
-# LOAD SHAPING CONTROLS FROM CSV
-# ---------------------------------------------------------
-controls_file = os.path.join(script_dir, "B0_Load_Shaping_Controls_2.csv")
 
-# Defaults in case of failure or missing values
-hourly_setpoints = {h: "OFF" for h in range(24)}
-AVERAGE_DEADBAND_KW = 0.1
-KP, KI, KD = 1.0, 1.0, 1.0
-COMMAND_PRIORITY = ['DRYER', 'EV', 'HVAC', 'WH', 'BATTERY']
-ALLOWED_COMMANDS = []
-
-try:
-    # Read the first two columns, skipping the header
-    df_ctrls = pd.read_csv(controls_file, usecols=[0, 1], names=['Command', 'Value'], skiprows=1)
-    df_ctrls = df_ctrls.dropna(subset=['Command'])
-    
-    COMMAND_PRIORITY_TEMP = []
-    ALLOWED_COMMANDS_TEMP = []
-    
-    for idx, row in df_ctrls.iterrows():
-        cmd = str(row['Command']).strip()
-        val = str(row['Value']).strip()
-        
-        # 1. Parse hourly setpoints (e.g., "0:00")
-        if ':' in cmd:
-            hour = int(cmd.split(':')[0])
-            hourly_setpoints[hour] = val
-            
-        # 2. Parse deadband power
-        elif cmd.lower() == 'deadband power':
-            AVERAGE_DEADBAND_KW = float(val)
-            
-        # 3. Parse priority devices (1 through 5)
-        elif cmd.lower().startswith('priority device'):
-            COMMAND_PRIORITY_TEMP.append(val.upper())
-            
-        # 4. Parse allowed commands (ALU, LU, SHED, CP, GE)
-        elif cmd in ['ALU', 'LU', 'SHED', 'CP', 'GE']:
-            if val.upper() == 'ON':
-                ALLOWED_COMMANDS_TEMP.append(cmd)
-                
-        # 5. Parse PID Controller Gains
-        elif cmd == 'KP':
-            KP = float(val)
-        elif cmd == 'KI':
-            KI = float(val)
-        elif cmd == 'KD':
-            KD = float(val)
-            
-    # Apply successfully parsed lists
-    if COMMAND_PRIORITY_TEMP:
-        COMMAND_PRIORITY = COMMAND_PRIORITY_TEMP
-    if ALLOWED_COMMANDS_TEMP:
-        ALLOWED_COMMANDS = ALLOWED_COMMANDS_TEMP
-        
-except Exception as e:
-    print(f"[WARNING] Could not load fully from {controls_file}. Using defaults where missing. Error: {e}")
-    
 # --- GLOBAL VPP EVENT SETTINGS ---
 # Define the time window for active load shaping
 # (Replaced by dynamic hourly setpoints from CSV)
@@ -110,8 +52,8 @@ except Exception as e:
 # Fleet-agnostic average power targets
 # AVERAGE_SETPOINT_KW = 1.9     # Target average power PER HOME during VPP event (Now dynamic)
 # AVERAGE_DEADBAND_KW = 0.01     # Tolerance PER HOME to prevent constant toggling (Loaded from CSV)
-ESTIMATED_LOAD_KW = 0.5       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
-ESTIMATED_SHED_KW = 0.3       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
+# ESTIMATED_LOAD_KW = 0.5       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
+# ESTIMATED_SHED_KW = 0.3       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
@@ -137,6 +79,11 @@ WH_Tcontrol_LOADdeadbandF = 2
 WH_TbaselineF = 130
 WH_TdeadbandF = 7
 WH_Tinit = 130
+
+# Response time in seconds
+WH_RESPONSE_MIN = 30
+WH_RESPONSE_MAX = 90
+
 
 count = 0
 
@@ -175,6 +122,10 @@ HEAT_Tcontrol_LOADdeadbandF = 2
 HEAT_TbaselineF = 68
 HEAT_TdeadbandF = 2
 HEAT_TinitF = 68
+
+# Response time in seconds
+HVAC_RESPONSE_MIN = 30
+HVAC_RESPONSE_MAX = 90
 
 # Dryer duty cycle parameters, dryers can't load up only curtail power
 dryer_duty_cycle_shed = 0.5
@@ -234,9 +185,9 @@ controls_file = os.path.join(script_dir, "B0_Load_Shaping_Controls_3.csv")
 
 # Defaults in case of failure or missing values
 hourly_setpoints = {h: "OFF" for h in range(24)}
-AVERAGE_DEADBAND_KW = 0.01
-KP, KI, KD = 2.0, 0.1, 0.1
-COMMAND_PRIORITY = ['DRYER', 'EV', 'HVAC', 'WH', 'BATTERY']
+AVERAGE_DEADBAND_KW = 0.1
+KP, KI, KD = 1.0, 1.0, 1.0
+FAST_COMMAND_PRIORITY = ['DRYER', 'EV', 'BATTERY', 'HVAC', 'WH']
 ALLOWED_COMMANDS = []
 
 try:
@@ -244,7 +195,8 @@ try:
     df_ctrls = pd.read_csv(controls_file, usecols=[0, 1], names=['Command', 'Value'], skiprows=1)
     df_ctrls = df_ctrls.dropna(subset=['Command'])
     
-    COMMAND_PRIORITY_TEMP = []
+    FAST_COMMAND_PRIORITY_TEMP = []
+    SLOW_COMMAND_PRIORITY_TEMP = []
     ALLOWED_COMMANDS_TEMP = []
     
     for idx, row in df_ctrls.iterrows():
@@ -257,8 +209,10 @@ try:
             hourly_setpoints[hour] = val
         elif cmd.lower() == 'deadband':
             AVERAGE_DEADBAND_KW = float(val)
-        elif cmd.startswith('Priority'):
-            COMMAND_PRIORITY_TEMP.append(val)
+        elif cmd.startswith('Fast'):
+            FAST_COMMAND_PRIORITY_TEMP.append(val)
+        elif cmd.startswith('Slow'):
+            SLOW_COMMAND_PRIORITY_TEMP.append(val)
         elif cmd in ['ALU', 'LU', 'SHED', 'CP', 'GE']:
             if val.upper() == 'ON':
                 ALLOWED_COMMANDS_TEMP.append(cmd)
@@ -269,8 +223,10 @@ try:
         elif cmd == 'KD':
             KD = float(val)
             
-    if COMMAND_PRIORITY_TEMP:
-        COMMAND_PRIORITY = COMMAND_PRIORITY_TEMP
+    if FAST_COMMAND_PRIORITY_TEMP:
+        FAST_COMMAND_PRIORITY = FAST_COMMAND_PRIORITY_TEMP
+    if SLOW_COMMAND_PRIORITY_TEMP:
+        SLOW_COMMAND_PRIORITY = SLOW_COMMAND_PRIORITY_TEMP
     if ALLOWED_COMMANDS_TEMP:
         ALLOWED_COMMANDS = ALLOWED_COMMANDS_TEMP
         
@@ -463,39 +419,174 @@ def aggregate_results(homes, work_dir):
         df_base_all.to_csv(os.path.join(work_dir, filename + "_baseline.csv"), index=False)
     print(f"Aggregated CSVs written!")
 
+
+def update_device_command(device_state, new_target, sim_time, min_delay_sec, max_delay_sec):
+    """
+    Updates reactive device target state and applies a random response delay.
+    """
+    # If a new command target is received, sample a delay and schedule execution
+    if new_target != device_state["target_cmd"]:
+        device_state["target_cmd"] = new_target
+        delay_sec = random.uniform(min_delay_sec, max_delay_sec)
+        device_state["effective_time"] = sim_time + pd.Timedelta(seconds=delay_sec)
+    
+    # Transition active state once effective time is reached
+    if sim_time >= device_state["effective_time"]:
+        device_state["active_cmd"] = device_state["target_cmd"]
+        
+    return device_state["active_cmd"]
+
 #########################################
-# HPWH / HVAC CONTROL & INITIALIZATION
+# CONTROL & INITIALIZATION
 #########################################
 
-def determine_hpwh_control(global_mode="NORMAL"):
-    """
-    Highly simplified controller. 
-    It purely reacts to the assigned global VPP mode.
-    """
-    ctrl_signal = {
-        'Water Heating': {
-            'Setpoint': WH_TbaselineC,
-            'Deadband': WH_TdeadbandC,
-            'Load Fraction': 1,
+def get_wh_setpoint(mode_name):
+    mode = mode_name.upper()
+    if mode in ["LOAD", "LU"]:
+        return WH_Tcontrol_LOADC, WH_Tcontrol_LOADdeadbandC
+    elif mode == "ALU":
+        return WH_Tcontrol_ALUC, WH_Tcontrol_ALUdeadbandC
+    elif mode in ["SHED", "S"]:
+        return WH_Tcontrol_SHEDC, WH_Tcontrol_deadbandC
+    elif mode == "CP":
+        return WH_Tcontrol_CPC, WH_Tcontrol_CPdeadbandC
+    elif mode == "GE":
+        return WH_Tcontrol_GEC, WH_Tcontrol_GEdeadbandC
+    else:  # "NORMAL"
+        return WH_TbaselineC, WH_TdeadbandC
+
+def get_hvac_setpoints(mode_name, is_cooling_season):
+    mode = mode_name.upper()
+    if mode in ["LOAD", "LU"]:
+        ac_sp, ac_db = AC_Tcontrol_LOADC, AC_Tcontrol_LOADdeadbandC
+        heat_sp, heat_db = HEAT_Tcontrol_LOADC, HEAT_Tcontrol_LOADdeadbandC
+    elif mode == "ALU":
+        ac_sp, ac_db = AC_Tcontrol_ALUC, AC_Tcontrol_ALUdeadbandC
+        heat_sp, heat_db = HEAT_Tcontrol_ALUC, HEAT_Tcontrol_ALUdeadbandC
+    elif mode in ["SHED", "S"]:
+        ac_sp, ac_db = AC_Tcontrol_SHEDC, AC_Tcontrol_deadbandC
+        heat_sp, heat_db = HEAT_Tcontrol_SHEDC, HEAT_Tcontrol_deadbandC
+    elif mode == "CP":
+        ac_sp, ac_db = AC_Tcontrol_CPC, AC_Tcontrol_CPdeadbandC
+        heat_sp, heat_db = HEAT_Tcontrol_CPC, HEAT_Tcontrol_CPdeadbandC
+    elif mode == "GE":
+        ac_sp, ac_db = AC_Tcontrol_GEC, AC_Tcontrol_GEdeadbandC
+        heat_sp, heat_db = HEAT_Tcontrol_GEC, HEAT_Tcontrol_GEdeadbandC
+    else:  # "NORMAL"
+        ac_sp, ac_db = AC_TbaselineC, AC_TdeadbandC
+        heat_sp, heat_db = HEAT_TbaselineC, HEAT_TdeadbandC
+
+    if is_cooling_season:
+        return (ac_sp, ac_db), (HEAT_Tcontrol_GEC, HEAT_TdeadbandC)
+    else:
+        return (AC_Tcontrol_GEC, AC_TdeadbandC), (heat_sp, heat_db)
+
+
+def determine_control(sim_time, wh_mode="NORMAL", hvac_mode="NORMAL", global_mode="NORMAL", home_charger_kw=None):
+    # Default offsets to 0 seconds if not provided
+    wh_delay = wh_delay if wh_delay is not None else pd.Timedelta(seconds=0)
+    hvac_delay = hvac_delay if hvac_delay is not None else pd.Timedelta(seconds=0)
+
+    # Initialize control signal dictionary
+    ctrl_signal = {}
+
+# Water Heating control
+    if WH_SIMULATION == "ON":
+        wh_sp, wh_db = get_wh_setpoint(wh_mode)
+        ctrl_signal['Water Heating'] = {
+            'Setpoint': wh_sp,
+            'Deadband': wh_db,
+            'Load Fraction': 1
         }
-    }
 
-    if global_mode == "SHED":
-        ctrl_signal['Water Heating'].update({
-            'Setpoint': WH_Tcontrol_SHEDC,
-            'Deadband': WH_Tcontrol_deadbandC
-        })
-    elif global_mode == "LOAD":
-        ctrl_signal['Water Heating'].update({
-            'Setpoint': WH_Tcontrol_LOADC,
-            'Deadband': WH_Tcontrol_LOADdeadbandC
-        })
+    # HVAC control
+    if HVAC_SIMULATION == "ON":
+        # Add HVAC if simulated, checking the month to separate Heating vs Cooling
+        # Let's assume May (5) through Sept (9) is Cooling Season in Portland
+        is_cooling_season = sim_time.month in [5, 6, 7, 8, 9]
+        cool_cfg, heat_cfg = get_hvac_setpoints(hvac_mode, is_cooling_season)
+        ctrl_signal['HVAC Cooling'] = {'Setpoint': cool_cfg[0], 'Deadband': cool_cfg[1], 'Load Fraction': 1}
+        ctrl_signal['HVAC Heating'] = {'Setpoint': heat_cfg[0], 'Deadband': heat_cfg[1], 'Load Fraction': 1}
+
+    # Add dryers if simulated
+    if DRYER_SIMULATION == "ON":
+        ctrl_signal['Clothes Dryer'] = {
+            'Load Fraction': 1  # 1 = Normal schedule operation
+        }
+
+    # Add batteries if simulated
+    if BATTERY_SIMULATION == "ON":
+        ctrl_signal['Battery'] = {
+            'P Setpoint': P_Battery_IDLE_KW
+        }
+
+
+    midnight = pd.to_datetime(sim_time.date())
+
+    # Define modes in priority order: 
+    # (Mode Name, WH_SP, WH_DB, AC_SP, AC_DB, HEAT_SP, HEAT_DB)
+    modes = [
+        ('ALU', WH_Tcontrol_ALUC, WH_Tcontrol_ALUdeadbandC, AC_Tcontrol_ALUC, AC_Tcontrol_ALUdeadbandC, HEAT_Tcontrol_ALUC, HEAT_Tcontrol_ALUdeadbandC),
+        ('LU',  WH_Tcontrol_LOADC, WH_Tcontrol_LOADdeadbandC, AC_Tcontrol_LOADC, AC_Tcontrol_LOADdeadbandC, HEAT_Tcontrol_LOADC, HEAT_Tcontrol_LOADdeadbandC),
+        ('S',   WH_Tcontrol_SHEDC, WH_Tcontrol_deadbandC, AC_Tcontrol_SHEDC, AC_Tcontrol_deadbandC, HEAT_Tcontrol_SHEDC, HEAT_Tcontrol_deadbandC),
+        ('CP',  WH_Tcontrol_CPC, WH_Tcontrol_CPdeadbandC, AC_Tcontrol_CPC, AC_Tcontrol_CPdeadbandC, HEAT_Tcontrol_CPC, HEAT_Tcontrol_CPdeadbandC),
+        ('GE',  WH_Tcontrol_GEC, WH_Tcontrol_GEdeadbandC, AC_Tcontrol_GEC, AC_Tcontrol_GEdeadbandC, HEAT_Tcontrol_GEC, HEAT_Tcontrol_GEdeadbandC)
+    ]
+
+
+    # Apply WH setpoints
+    if WH_SIMULATION == "ON" and wh_mode:
+        _, wh_sp, wh_db, _, _, _, _ = wh_mode
+        ctrl_signal['Water Heating'].update({'Setpoint': wh_sp, 'Deadband': wh_db})
+
+    # Apply HVAC setpoints
+    if HVAC_SIMULATION == "ON" and hvac_mode:
+        _, _, _, ac_sp, ac_db, heat_sp, heat_db = hvac_mode
+        if is_cooling_season:
+            ctrl_signal['HVAC Cooling'].update({'Setpoint': ac_sp, 'Deadband': ac_db})
+        else:
+            ctrl_signal['HVAC Heating'].update({'Setpoint': heat_sp, 'Deadband': heat_db})
+
+    # EV control (tracks global mode)
+    if EV_SIMULATION == "ON" and home_charger_kw is not None:
+        g_mode = global_mode.upper()
+        fraction = EV_SHED_PCT if g_mode in ["SHED", "S"] else (EV_CP_PCT if g_mode == "CP" else (EV_GE_PCT if g_mode == "GE" else 1.0))
+        commanded_kw = abs(fraction * home_charger_kw)
+        ctrl_signal['EV'] = {'Max Power': max(commanded_kw, 0.001)}
+
+# Battery control (tracks global mode)
+    if BATTERY_SIMULATION == "ON":
+        g_mode = global_mode.upper()
+        battery_p_map = {
+            'ALU': P_Battery_ALU_KW,
+            'LU': P_Battery_LU_KW,
+            'LOAD': P_Battery_LU_KW,
+            'S': P_Battery_SHED_KW,
+            'SHED': P_Battery_SHED_KW,
+            'CP': P_Battery_CP_KW,
+            'GE': P_Battery_GE_KW
+        }
+        battery_p = battery_p_map.get(g_mode, P_Battery_IDLE_KW)
+        ctrl_signal['Battery'] = {'P Setpoint': battery_p}
 
     return ctrl_signal
 
 def initialize_home(home_path, weather_file_path):
     filtered_sched_file = filter_schedules(home_path)
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
+
+    equipment = {}
+
+    if WH_SIMULATION == "ON":
+        equipment['Water Heating'] = {
+            "Initial Temperature (C)": WH_TinitC, 
+            "hp_only_mode": True,
+            "Max Tank Temperature": 70,
+            "Upper Node": 3,
+            "Lower Node": 10,
+            "Upper Node Weight": 0.75,
+        }
+
     
     dwelling_args_local = {
         "start_time": Start,
@@ -505,16 +596,7 @@ def initialize_home(home_path, weather_file_path):
         "hpxml_schedule_file": filtered_sched_file,
         "weather_file": weather_file_path,
         "verbosity": 7,
-        "Equipment": {
-            "Water Heating": {
-                "Initial Temperature (C)": WH_TinitC, 
-                "hp_only_mode": True,
-                "Max Tank Temperature": 70,
-                "Upper Node": 3,
-                "Lower Node": 10,
-                "Upper Node Weight": 0.75,
-            },
-        }
+        "Equipment": equipment
     }
 
     base_dwelling = Dwelling(name=f"Base_{os.path.basename(home_path)}", **dwelling_args_local)
@@ -528,7 +610,17 @@ def init_fleet_worker(home):
         "base": base_dw, 
         "sim": sim_dw, 
         "path": home,
-        "override": "NORMAL"  # VPP command tracking state
+        "override": "NORMAL",  # VPP command target state
+        "wh_state": {
+            "active_cmd": "NORMAL",
+            "target_cmd": "NORMAL",
+            "effective_time": pd.Timestamp.min
+        },
+        "hvac_state": {
+            "active_cmd": "NORMAL",
+            "target_cmd": "NORMAL",
+            "effective_time": pd.Timestamp.min
+        }
     }
 
 #########################################
@@ -586,6 +678,12 @@ if __name__ == "__main__":
     integral_error = 0.0
     previous_error = 0.0
 
+    fast_priority = "OFF"
+    slow_priority= "OFF"
+
+    load_priority = ['LU', 'ALU']
+    shed_priority = ['SHED', 'CP', 'GE']
+
     print("Starting Co-Simulation Time Loop...")
     for sim_time in sim_times:
         current_time_of_day = sim_time.time()
@@ -602,6 +700,14 @@ if __name__ == "__main__":
             # --- Active Load Shaping Dispatch Logic (Bidirectional & Asymmetrical) ---
             # PID error calculation: Error = Setpoint - Actual
             error = AVERAGE_SETPOINT_KW - average_power_kw
+
+            if error > 0.25:
+                fast_priority = "ON"
+                slow_priority = "OFF"
+            else:
+                slow_priority = "ON"
+                fast_priority = "OFF"
+
             
             # Discrete-time tracking transformations
             integral_error += error
@@ -626,21 +732,21 @@ if __name__ == "__main__":
                 load_homes = [h for h in fleet_data if h["override"] == "LOAD"]
                 random.shuffle(load_homes)
                 
-                units_to_drop_from_load = int(total_kw_to_drop / ESTIMATED_LOAD_KW)
+                units_to_drop_from_load = int(total_kw_to_drop / (WH_END_LU_FRAC * WH_CAP_KW))
                 dropped_from_load = min(units_to_drop_from_load, len(load_homes))
                 
                 for h in load_homes[:dropped_from_load]:
                     h["override"] = "NORMAL"
                     
                 # Subtract the power we just accounted for
-                total_kw_to_drop -= (dropped_from_load * ESTIMATED_LOAD_KW)
+                total_kw_to_drop -= (dropped_from_load * (WH_END_LU_FRAC * WH_CAP_KW))
                 
                 # 2. If we still need to drop power, issue SHED commands (Low impact)
                 if total_kw_to_drop > 0:
                     normal_homes = [h for h in fleet_data if h["override"] == "NORMAL"]
                     random.shuffle(normal_homes)
                     
-                    units_to_shed = int(total_kw_to_drop / ESTIMATED_SHED_KW)
+                    units_to_shed = int(total_kw_to_drop / (WH_SHED_FRAC * WH_CAP_KW))
                     shed_applied = min(units_to_shed, len(normal_homes))
                     
                     for h in normal_homes[:shed_applied]:
@@ -654,21 +760,21 @@ if __name__ == "__main__":
                 shed_homes = [h for h in fleet_data if h["override"] == "SHED"]
                 random.shuffle(shed_homes)
                 
-                units_to_restore_from_shed = int(total_kw_to_add / ESTIMATED_SHED_KW)
+                units_to_restore_from_shed = int(total_kw_to_add / (WH_END_SHED_FRAC * WH_CAP_KW))
                 restored_from_shed = min(units_to_restore_from_shed, len(shed_homes))
                 
                 for h in shed_homes[:restored_from_shed]:
                     h["override"] = "NORMAL"
                     
                 # Subtract the power we just accounted for
-                total_kw_to_add -= (restored_from_shed * ESTIMATED_SHED_KW)
+                total_kw_to_add -= (restored_from_shed * (WH_END_SHED_FRAC * WH_CAP_KW))
                 
                 # 2. If we still need to add power, issue LOAD commands (High impact)
                 if total_kw_to_add > 0:
                     normal_homes = [h for h in fleet_data if h["override"] == "NORMAL"]
                     random.shuffle(normal_homes)
                     
-                    units_to_load = int(total_kw_to_add / ESTIMATED_LOAD_KW)
+                    units_to_load = int(total_kw_to_add / (WH_LU_FRAC * WH_CAP_KW))
                     load_applied = min(units_to_load, len(normal_homes))
                     
                     for h in normal_homes[:load_applied]:
@@ -688,13 +794,36 @@ if __name__ == "__main__":
         for home_data in fleet_data:
             base_dw = home_data["base"]
             sim_dw = home_data["sim"]
+            target_mode = home_data["override"]
+
+            # Evaluate delayed reactive commands for WH and HVAC
+            wh_cmd = update_device_command(
+                home_data["wh_state"], 
+                target_mode, 
+                sim_time, 
+                WH_RESPONSE_MIN, 
+                WH_RESPONSE_MAX
+            )
+            
+            hvac_cmd = update_device_command(
+                home_data["hvac_state"], 
+                target_mode, 
+                sim_time, 
+                HVAC_RESPONSE_MIN, 
+                HVAC_RESPONSE_MAX
+            )
             
             # 1. Baseline Update
             base_ctrl = {"Water Heating": {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1}}
             base_dw.update(control_signal=base_ctrl)
             
            # 2. Controlled Update (driven purely by the VPP state now)
-            control_cmd = determine_hpwh_control(global_mode=home_data["override"])
+            control_cmd = determine_control(
+                sim_time=sim_time,
+                wh_mode=wh_cmd,
+                hvac_mode=hvac_cmd,
+                global_mode=target_mode
+            )
             
             # The update() method usually returns a dictionary of the current timestep's metrics
             metrics = sim_dw.update(control_signal=control_cmd)
@@ -733,16 +862,19 @@ if __name__ == "__main__":
     # --- 3. Finalize and Output Data ---
     print("Simulation complete! Finalizing results...")
     
-    CTRL_COLS = ["Time", "Total Electric Power (kW)",
-                 "Total Electric Energy (kWh)",
-                 "Water Heating Electric Power (kW)",
-                 "Water Heating COP (-)",
-                 "Water Heating Deadband Upper Limit (C)",
-                 "Water Heating Deadband Lower Limit (C)",
-                 "Water Heating Heat Pump COP (-)",
-                 "Water Heating Control Temperature (C)",
-                 "Hot Water Outlet Temperature (C)",
-                 "Temperature - Indoor (C)"]
+    CTRL_COLS = ["Time", "Total Electric Power (kW)", "Total Electric Energy (kWh)"]
+    if WH_SIMULATION == "ON":
+        CTRL_COLS.append("Water Heating Electric Power (kW)")
+    if HVAC_SIMULATION == "ON":
+        CTRL_COLS.extend(["HVAC Heating Electric Power (kW)", "HVAC Cooling Electric Power (kW)"])
+    if DRYER_SIMULATION == "ON":
+        CTRL_COLS.append("Clothes Dryer Electric Power (kW)")
+    if EV_SIMULATION == "ON":
+        CTRL_COLS.append("EV Electric Power (kW)")
+        CTRL_COLS.append("EV SOC (-)")
+    if BATTERY_SIMULATION == "ON":
+        CTRL_COLS.append("Battery Electric Power (kW)")
+        CTRL_COLS.append("Battery SOC (-)")
     
     for home_data in fleet_data:
         home_path = home_data["path"]
