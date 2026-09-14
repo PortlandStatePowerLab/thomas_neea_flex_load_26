@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_3'
+input_file_root = 'COMBO_WH_Loadshape_1'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
