@@ -19,7 +19,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_WH_Loadshape_1'
+filename = 'COMBO_Loadshape_WH_HVAC_3'
 Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
 
 # Original OCHRE defaults folder
@@ -40,7 +40,7 @@ CSV_ADDRESS = "in.schedules.csv"
 # Simulation parameters
 Start = dt.datetime(2018, 8, 11, 0, 0)
 Duration = 2  # days
-t_res = 15  # minutes
+t_res = 5  # minutes
 
 
 # --- GLOBAL VPP EVENT SETTINGS ---
@@ -193,15 +193,15 @@ ALLOWED_COMMANDS = []
 
 try:
     # Read the first two columns, skipping the header
-    df_ctrls = pd.read_csv(controls_file, usecols=[0, 1], names=['Command', 'Value'], skiprows=1)
-    df_ctrls = df_ctrls.dropna(subset=['Command'])
+    df_ctrls = pd.read_csv(controls_file, usecols=[0, 1], names=['Control', 'Value'], skiprows=1)
+    df_ctrls = df_ctrls.dropna(subset=['Control'])
     
     FAST_COMMAND_PRIORITY_TEMP = []
     SLOW_COMMAND_PRIORITY_TEMP = []
     ALLOWED_COMMANDS_TEMP = []
     
     for idx, row in df_ctrls.iterrows():
-        cmd = str(row['Command']).strip()
+        cmd = str(row['Control']).strip()
         val = str(row['Value']).strip()
         
         # Check if the command is a time string like "0:00"
@@ -246,29 +246,29 @@ DRYER_CAP_KW = 15
 EV_CAP_KW = 9.5
 BATT_CAP_KW = 1
 
-WH_ALU_FRAC = 0.9
-WH_END_ALU_FRAC = 0
-WH_LU_FRAC = 0.25
-WH_END_LU_FRAC = 0.1
+WH_ALU_FRAC = 1.0
+WH_END_ALU_FRAC = 0.01
+WH_LU_FRAC = 0.4
+WH_END_LU_FRAC = 0.05
 WH_NORM_FRAC = 0.2
-WH_SHED_FRAC = 0.1
-WH_END_SHED_FRAC = 0.25
-WH_CP_FRAC = 0
-WH_END_CP_FRAC = 0.4
+WH_SHED_FRAC = 0.05
+WH_END_SHED_FRAC = 0.4
+WH_CP_FRAC = 0.01
+WH_END_CP_FRAC = 0.6
 WH_GE_FRAC = 0
-WH_END_GE_FRAC = 0.6
+WH_END_GE_FRAC = 0.8
 
-HVAC_ALU_FRAC = 0.2
-HVAC_END_ALU_FRAC = 0
-HVAC_LU_FRAC = 0.125
-HVAC_END_LU_FRAC = 0.05
+HVAC_ALU_FRAC = 0.4
+HVAC_END_ALU_FRAC = 0.001
+HVAC_LU_FRAC = 0.25
+HVAC_END_LU_FRAC = 0.02
 HVAC_NORM_FRAC = 0.1
-HVAC_SHED_FRAC = 0.05
-HVAC_END_SHED_FRAC = 0.125
-HVAC_CP_FRAC = 0
-HVAC_END_CP_FRAC = 0.15
+HVAC_SHED_FRAC = 0.02
+HVAC_END_SHED_FRAC = 0.25
+HVAC_CP_FRAC = 0.001
+HVAC_END_CP_FRAC = 0.25
 HVAC_GE_FRAC = 0
-HVAC_END_GE_FRAC = 0.15
+HVAC_END_GE_FRAC = 0.4
 
 DRYER_NORM_FRAC = 0.3
 DRYER_SHED_FRAC = 0.15
@@ -296,11 +296,11 @@ BATT_GE_FRAC = -1
 # --- MULTI-DEVICE FRACTION MAPPING FOR DYNAMIC DISPATCH ---
 # This bridges your original variables to the generic priority queue
 FRAC_MAP = {
-    'WH': {'CAP': WH_CAP_KW, 'LU': WH_LU_FRAC, 'END_LU': WH_END_LU_FRAC, 'ALU': WH_ALU_FRAC, 'END_ALU': WH_END_ALU_FRAC, 'SHED': WH_SHED_FRAC, 'END_SHED': WH_END_SHED_FRAC, 'CP': WH_CP_FRAC, 'END_CP': WH_END_CP_FRAC, 'GE': WH_GE_FRAC, 'END_GE': WH_END_GE_FRAC},
-    'HVAC': {'CAP': HVAC_CAP_KW, 'LU': HVAC_LU_FRAC, 'END_LU': HVAC_END_LU_FRAC, 'ALU': HVAC_ALU_FRAC, 'END_ALU': HVAC_END_ALU_FRAC, 'SHED': HVAC_SHED_FRAC, 'END_SHED': HVAC_END_SHED_FRAC, 'CP': HVAC_CP_FRAC, 'END_CP': HVAC_END_CP_FRAC, 'GE': HVAC_GE_FRAC, 'END_GE': HVAC_END_GE_FRAC},
-    'DRYER': {'CAP': DRYER_CAP_KW, 'LU': 0.0, 'END_LU': 0.0, 'ALU': 0.0, 'END_ALU': 0.0, 'SHED': DRYER_SHED_FRAC, 'END_SHED': DRYER_END_SHED_FRAC, 'CP': DRYER_CP_FRAC, 'END_CP': DRYER_END_CP_FRAC, 'GE': DRYER_GE_FRAC, 'END_GE': DRYER_END_GE_FRAC},
-    'EV': {'CAP': EV_CAP_KW, 'LU': 0.0, 'END_LU': 0.0, 'ALU': 0.0, 'END_ALU': 0.0, 'SHED': EV_SHED_FRAC, 'END_SHED': EV_END_SHED_FRAC, 'CP': EV_CP_FRAC, 'END_CP': EV_END_CP_FRAC, 'GE': EV_GE_FRAC, 'END_GE': EV_END_GE_FRAC},
-    'BATTERY': {'CAP': BATT_CAP_KW, 'LU': BATT_LU_FRAC, 'END_LU': 0.0, 'ALU': BATT_ALU_FRAC, 'END_ALU': 0.0, 'SHED': BATT_SHED_FRAC, 'END_SHED': 0.0, 'CP': BATT_CP_FRAC, 'END_CP': 0.0, 'GE': BATT_GE_FRAC, 'END_GE': 0.0}
+    'WH': {'CAP': WH_CAP_KW, 'NORMAL': WH_NORM_FRAC, 'LU': WH_LU_FRAC, 'END_LU': WH_END_LU_FRAC, 'ALU': WH_ALU_FRAC, 'END_ALU': WH_END_ALU_FRAC, 'SHED': WH_SHED_FRAC, 'END_SHED': WH_END_SHED_FRAC, 'CP': WH_CP_FRAC, 'END_CP': WH_END_CP_FRAC, 'GE': WH_GE_FRAC, 'END_GE': WH_END_GE_FRAC},
+    'HVAC': {'CAP': HVAC_CAP_KW, 'NORMAL': HVAC_NORM_FRAC, 'LU': HVAC_LU_FRAC, 'END_LU': HVAC_END_LU_FRAC, 'ALU': HVAC_ALU_FRAC, 'END_ALU': HVAC_END_ALU_FRAC, 'SHED': HVAC_SHED_FRAC, 'END_SHED': HVAC_END_SHED_FRAC, 'CP': HVAC_CP_FRAC, 'END_CP': HVAC_END_CP_FRAC, 'GE': HVAC_GE_FRAC, 'END_GE': HVAC_END_GE_FRAC},
+    'DRYER': {'CAP': DRYER_CAP_KW, 'NORMAL': DRYER_NORM_FRAC, 'LU': 0.0, 'END_LU': 0.0, 'ALU': 0.0, 'END_ALU': 0.0, 'SHED': DRYER_SHED_FRAC, 'END_SHED': DRYER_END_SHED_FRAC, 'CP': DRYER_CP_FRAC, 'END_CP': DRYER_END_CP_FRAC, 'GE': DRYER_GE_FRAC, 'END_GE': DRYER_END_GE_FRAC},
+    'EV': {'CAP': EV_CAP_KW, 'NORMAL': EV_NORM_FRAC, 'LU': 0.0, 'END_LU': 0.0, 'ALU': 0.0, 'END_ALU': 0.0, 'SHED': EV_SHED_FRAC, 'END_SHED': EV_END_SHED_FRAC, 'CP': EV_CP_FRAC, 'END_CP': EV_END_CP_FRAC, 'GE': EV_GE_FRAC, 'END_GE': EV_END_GE_FRAC},
+    'BATTERY': {'CAP': BATT_CAP_KW, 'NORMAL': BATT_NORM_FRAC, 'LU': BATT_LU_FRAC, 'END_LU': 0.0, 'ALU': BATT_ALU_FRAC, 'END_ALU': 0.0, 'SHED': BATT_SHED_FRAC, 'END_SHED': 0.0, 'CP': BATT_CP_FRAC, 'END_CP': 0.0, 'GE': BATT_GE_FRAC, 'END_GE': 0.0}
 }
 
 #########################################
@@ -681,8 +681,8 @@ if __name__ == "__main__":
             
             # --- ANTI-WINDUP CLAMPING ---
             # Prevent the integral from building up a massive "memory" when error stays positive or negative for hours
-            MAX_INTEGRAL = 0.2
-            MIN_INTEGRAL = -0.2
+            MAX_INTEGRAL = 1.0
+            MIN_INTEGRAL = -1.0
             integral_error = max(min(integral_error, MAX_INTEGRAL), MIN_INTEGRAL)
             
             derivative_error = error - previous_error
@@ -695,80 +695,100 @@ if __name__ == "__main__":
                 # OVER setpoint -> Need to DROP load
                 total_kw_to_drop = abs(pid_output) * num_homes
                 
-                # 1. Turn off active LOAD commands first (High impact)
+                # 1. Turn off active LOAD commands first (High impact, using explicit END fractions)
                 for dev in priority_list:
                     if total_kw_to_drop <= 0: break
                     if enabled_simulations.get(dev) != "ON": continue
                     
-                    # End ALU
-                    alu_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == "ALU"]
-                    random.shuffle(alu_homes)
-                    drop_per_unit = FRAC_MAP[dev]['END_ALU'] * FRAC_MAP[dev]['CAP']
-                    if drop_per_unit > 0:
-                        units = int(total_kw_to_drop / drop_per_unit)
-                        applied = min(units, len(alu_homes))
-                        for h in alu_homes[:applied]: h["device_states"][dev]["target_cmd"] = "NORMAL"
-                        total_kw_to_drop -= applied * drop_per_unit
-                    
-                    # End LU/LOAD
-                    lu_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] in ["LOAD", "LU"]]
-                    random.shuffle(lu_homes)
-                    drop_per_unit = FRAC_MAP[dev]['END_LU'] * FRAC_MAP[dev]['CAP']
-                    if drop_per_unit > 0:
-                        units = int(total_kw_to_drop / drop_per_unit)
-                        applied = min(units, len(lu_homes))
-                        for h in lu_homes[:applied]: h["device_states"][dev]["target_cmd"] = "NORMAL"
-                        total_kw_to_drop -= applied * drop_per_unit
+                    for active_cmd in ["ALU", "LU", "LOAD"]:
+                        homes_to_end = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == active_cmd]
+                        random.shuffle(homes_to_end)
                         
-                # 2. If we still need to drop power, issue SHED commands (Low impact)
-                for dev in priority_list:
+                        # Use your explicit END_ fraction logic
+                        frac_key = active_cmd if active_cmd != "LOAD" else "LU"
+                        end_frac_key = f"END_{active_cmd}" if active_cmd != "LOAD" else "END_LU"
+                        drop_per_unit = (FRAC_MAP[dev][frac_key] - FRAC_MAP[dev][end_frac_key]) * FRAC_MAP[dev]['CAP']
+                        
+                        if drop_per_unit > 0:
+                            units = int(total_kw_to_drop / drop_per_unit)
+                            applied = min(units, len(homes_to_end))
+                            for h in homes_to_end[:applied]: h["device_states"][dev]["target_cmd"] = "NORMAL"
+                            total_kw_to_drop -= applied * drop_per_unit
+                        
+                # 2. Cascade into deeper shed commands (Conservative first across ALL devices)
+                shed_transitions = [
+                    ("NORMAL", "SHED"),
+                    ("SHED", "CP"),
+                    ("CP", "GE")
+                ]
+                
+                for current_state, next_state in shed_transitions:
                     if total_kw_to_drop <= 0: break
-                    if enabled_simulations.get(dev) != "ON": continue
                     
-                    for shed_cmd in ["SHED", "CP", "GE"]:
-                        if shed_cmd in ALLOWED_COMMANDS:
-                            normal_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == "NORMAL"]
-                            random.shuffle(normal_homes)
-                            drop_per_unit = FRAC_MAP[dev][shed_cmd] * FRAC_MAP[dev]['CAP']
+                    for dev in priority_list:
+                        if total_kw_to_drop <= 0: break
+                        if enabled_simulations.get(dev) != "ON": continue
+                        
+                        if next_state in ALLOWED_COMMANDS:
+                            available_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == current_state]
+                            random.shuffle(available_homes)
+                            
+                            # Drop = Current Command Power - Next Command Power
+                            drop_fraction = FRAC_MAP[dev][current_state] - FRAC_MAP[dev][next_state]
+                            drop_per_unit = drop_fraction * FRAC_MAP[dev]['CAP']
+                            
                             if drop_per_unit > 0:
                                 units = int(total_kw_to_drop / drop_per_unit)
-                                applied = min(units, len(normal_homes))
-                                for h in normal_homes[:applied]: h["device_states"][dev]["target_cmd"] = shed_cmd
+                                applied = min(units, len(available_homes))
+                                for h in available_homes[:applied]: h["device_states"][dev]["target_cmd"] = next_state
                                 total_kw_to_drop -= applied * drop_per_unit
                         
             elif pid_output > AVERAGE_DEADBAND_KW:
                 # UNDER setpoint -> Need to ADD load
                 total_kw_to_add = pid_output * num_homes
                 
-                # 1. Turn off active SHED commands first (Low impact)
+                # 1. Turn off active SHED commands first (Low impact, using explicit END fractions)
                 for dev in priority_list:
                     if total_kw_to_add <= 0: break
                     if enabled_simulations.get(dev) != "ON": continue
                     
-                    for shed_cmd in ["GE", "CP", "SHED"]:
-                        shed_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == shed_cmd]
-                        random.shuffle(shed_homes)
-                        add_per_unit = FRAC_MAP[dev][f'END_{shed_cmd}'] * FRAC_MAP[dev]['CAP']
+                    for active_cmd in ["GE", "CP", "SHED"]:
+                        homes_to_end = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == active_cmd]
+                        random.shuffle(homes_to_end)
+                        
+                        add_per_unit = (FRAC_MAP[dev][f'END_{active_cmd}'] - FRAC_MAP[dev][f'{active_cmd}']) * FRAC_MAP[dev]['CAP']
+
                         if add_per_unit > 0:
                             units = int(total_kw_to_add / add_per_unit)
-                            applied = min(units, len(shed_homes))
-                            for h in shed_homes[:applied]: h["device_states"][dev]["target_cmd"] = "NORMAL"
+                            applied = min(units, len(homes_to_end))
+                            for h in homes_to_end[:applied]: h["device_states"][dev]["target_cmd"] = "NORMAL"
                             total_kw_to_add -= applied * add_per_unit
                             
-                # 2. If we still need to add power, issue LOAD commands (High impact)
-                for dev in priority_list:
+                # 2. Cascade into deeper load commands (Conservative first)
+                load_transitions = [
+                    ("NORMAL", "LU"),
+                    ("LU", "ALU")
+                ]
+                
+                for current_state, next_state in load_transitions:
                     if total_kw_to_add <= 0: break
-                    if enabled_simulations.get(dev) != "ON": continue
                     
-                    for load_cmd in ["LU", "ALU"]:
-                        if load_cmd in ALLOWED_COMMANDS:
-                            normal_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == "NORMAL"]
-                            random.shuffle(normal_homes)
-                            add_per_unit = FRAC_MAP[dev][load_cmd] * FRAC_MAP[dev]['CAP']
+                    for dev in priority_list:
+                        if total_kw_to_add <= 0: break
+                        if enabled_simulations.get(dev) != "ON": continue
+                        
+                        if next_state in ALLOWED_COMMANDS:
+                            available_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == current_state]
+                            random.shuffle(available_homes)
+                            
+                            # Drop = Current Command Power - Next Command Power
+                            add_fraction = FRAC_MAP[dev][next_state] - FRAC_MAP[dev][current_state]
+                            add_per_unit = add_fraction * FRAC_MAP[dev]['CAP']
+                            
                             if add_per_unit > 0:
                                 units = int(total_kw_to_add / add_per_unit)
-                                applied = min(units, len(normal_homes))
-                                for h in normal_homes[:applied]: h["device_states"][dev]["target_cmd"] = load_cmd
+                                applied = min(units, len(available_homes))
+                                for h in available_homes[:applied]: h["device_states"][dev]["target_cmd"] = next_state
                                 total_kw_to_add -= applied * add_per_unit
 
         else:
@@ -901,6 +921,7 @@ if __name__ == "__main__":
     # --- 5. Export VPP State Log ---
     print("Saving VPP state log...")
     df_vpp_log = pd.DataFrame(vpp_state_log)
+    df_vpp_log = remove_first_day(df_vpp_log, Start)
     vpp_log_path = os.path.join(WORKING_DIR, filename + "_VPP_Fleet_States.csv")
     df_vpp_log.to_csv(vpp_log_path, index=False)
     print(f"VPP State Log saved to: {vpp_log_path}")

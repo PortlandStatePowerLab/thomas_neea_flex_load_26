@@ -173,6 +173,9 @@ def plot_data(baseline_file, controlled_file, title, photo_file, schedule_comman
     df_base = pd.read_csv(baseline_file, index_col=0)
     df_con = pd.read_csv(controlled_file, index_col=0)
 
+    # Calculate the number of homes (total rows minus the 'Average' row added prior)
+    num_homes = len(df_base) - 1
+
     # Extract averages and transpose (Keeping your existing logic)
     df_base = pd.DataFrame(df_base.iloc[[0, -1]].iloc[1, :]).reset_index()
     df_con = pd.DataFrame(df_con.iloc[[0, -1]].iloc[1, :]).reset_index()
@@ -206,6 +209,10 @@ def plot_data(baseline_file, controlled_file, title, photo_file, schedule_comman
             
         ax2.plot(cmd['times'], y_vals, color=cmd['color'], linewidth=1)
         ax2.fill_between(cmd['times'], y_vals, color=cmd['color'], alpha=0.1, label=label)
+
+    # Update title to include n=... indicator
+    ax1.set_title(f"{title} (n={num_homes})")
+    ax1.grid(True, alpha=0.3)
 
     # --- FORMATTING & LEGEND ---
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
