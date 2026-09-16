@@ -19,7 +19,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_Loadshape_WH_HVAC_3'
+filename = 'COMBO_Loadshape_WH_HVAC_7'
 Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
 
 # Original OCHRE defaults folder
@@ -184,7 +184,7 @@ BATTERY_SIMULATION = device_sim_map.get("Battery", "OFF")
 controls_file = os.path.join(script_dir, "B0_Load_Shaping_Controls.csv")
 
 # Defaults in case of failure or missing values
-hourly_setpoints = {h: "OFF" for h in range(24)}
+hourly_settings = {h: {"target": "OFF", "deadband": 0.1} for h in range(24)}
 AVERAGE_DEADBAND_KW = 0.1
 KP, KI, KD = 1.0, 1.0, 1.0
 FAST_COMMAND_PRIORITY = ['DRYER', 'EV', 'BATTERY', 'HVAC', 'WH']
@@ -192,8 +192,8 @@ SLOW_COMMAND_PRIORITY = []
 ALLOWED_COMMANDS = []
 
 try:
-    # Read the first two columns, skipping the header
-    df_ctrls = pd.read_csv(controls_file, usecols=[0, 1], names=['Control', 'Value'], skiprows=1)
+    # # Read the first three columns, skipping the header
+    df_ctrls = pd.read_csv(controls_file, usecols=[0, 1, 2], names=['Control', 'Value', 'Deadband'], skiprows=1)
     df_ctrls = df_ctrls.dropna(subset=['Control'])
     
     FAST_COMMAND_PRIORITY_TEMP = []
@@ -203,13 +203,24 @@ try:
     for idx, row in df_ctrls.iterrows():
         cmd = str(row['Control']).strip()
         val = str(row['Value']).strip()
+        db_val = row['Deadband']
         
         # Check if the command is a time string like "0:00"
         if ':' in cmd:
             hour = int(cmd.split(':')[0])
-            hourly_setpoints[hour] = val
+            # Parse the deadband float, fallback to 0.1 if missing/invalid
+            try:
+                db_float = float(db_val)
+            except (ValueError, TypeError):
+                db_float = 0.1
+            hourly_settings[hour] = {"target": val, "deadband": db_float}
+            
         elif cmd.lower() == 'deadband':
-            AVERAGE_DEADBAND_KW = float(val)
+            # Keep global fallback just in case
+            try:
+                AVERAGE_DEADBAND_KW = float(val)
+            except ValueError:
+                pass
         elif cmd.startswith('Fast'):
             FAST_COMMAND_PRIORITY_TEMP.append(val)
         elif cmd.startswith('Slow'):
@@ -235,18 +246,17 @@ except Exception as e:
     print(f"[WARNING] Could not load fully from {controls_file}. Using defaults where missing. Error: {e}")
 
 
-
 #########################################
 # POWER ADJUSTMENT ESTIMATIONS
 #########################################
 
 WH_CAP_KW = 0.5
-HVAC_CAP_KW = 10
+HVAC_CAP_KW = 12
 DRYER_CAP_KW = 15
 EV_CAP_KW = 9.5
 BATT_CAP_KW = 1
 
-WH_ALU_FRAC = 1.0
+WH_ALU_FRAC = 1.1
 WH_END_ALU_FRAC = 0.01
 WH_LU_FRAC = 0.4
 WH_END_LU_FRAC = 0.05
@@ -258,7 +268,7 @@ WH_END_CP_FRAC = 0.6
 WH_GE_FRAC = 0
 WH_END_GE_FRAC = 0.8
 
-HVAC_ALU_FRAC = 0.4
+HVAC_ALU_FRAC = 0.5
 HVAC_END_ALU_FRAC = 0.001
 HVAC_LU_FRAC = 0.25
 HVAC_END_LU_FRAC = 0.02
@@ -268,7 +278,7 @@ HVAC_END_SHED_FRAC = 0.25
 HVAC_CP_FRAC = 0.001
 HVAC_END_CP_FRAC = 0.25
 HVAC_GE_FRAC = 0
-HVAC_END_GE_FRAC = 0.4
+HVAC_END_GE_FRAC = 0.5
 
 DRYER_NORM_FRAC = 0.3
 DRYER_SHED_FRAC = 0.15
@@ -662,17 +672,26 @@ if __name__ == "__main__":
         current_time_of_day = sim_time.time()
         current_hour = current_time_of_day.hour
         
-        # Determine VPP state from the CSV schedule
-        hourly_val = hourly_setpoints.get(current_hour, "OFF")
+        # Determine VPP state and deadband from the CSV schedule
+        hourly_data = hourly_settings.get(current_hour, {"target": "OFF", "deadband": 0.1})
+        hourly_val = hourly_data["target"]
         is_vpp_active = str(hourly_val).upper() != "OFF"
 
         if is_vpp_active:
-            # Set the new dynamic target
+            # Set the new dynamic targets for both power and deadband
             AVERAGE_SETPOINT_KW = float(hourly_val)
+            AVERAGE_DEADBAND_KW = float(hourly_data["deadband"])
             
             # --- Active Load Shaping Dispatch Logic (Bidirectional & Asymmetrical) ---
-            # PID error calculation: Error = Setpoint - Actual
-            error = AVERAGE_SETPOINT_KW - average_power_kw
+            # Calculate raw error first: Error = Setpoint - Actual
+            raw_error = AVERAGE_SETPOINT_KW - average_power_kw
+            
+            # 1. Apply the deadband directly to the actual error
+            if abs(raw_error) <= AVERAGE_DEADBAND_KW:
+                error = 0.0
+                integral_error = 0.0  # Clear memory so it doesn't cause sticky commands
+            else:
+                error = raw_error
             
             priority_list = FAST_COMMAND_PRIORITY if error > 0.25 else SLOW_COMMAND_PRIORITY
             
@@ -691,7 +710,8 @@ if __name__ == "__main__":
             # Compute PID output value
             pid_output = (KP * error) + (KI * integral_error) + (KD * derivative_error)
             
-            if pid_output < -AVERAGE_DEADBAND_KW:
+            # 2. Trigger dispatch using a near-zero threshold, since the deadband is already handled
+            if pid_output < -0.01:
                 # OVER setpoint -> Need to DROP load
                 total_kw_to_drop = abs(pid_output) * num_homes
                 
@@ -743,7 +763,7 @@ if __name__ == "__main__":
                                 for h in available_homes[:applied]: h["device_states"][dev]["target_cmd"] = next_state
                                 total_kw_to_drop -= applied * drop_per_unit
                         
-            elif pid_output > AVERAGE_DEADBAND_KW:
+            elif pid_output > 0.01:
                 # UNDER setpoint -> Need to ADD load
                 total_kw_to_add = pid_output * num_homes
                 

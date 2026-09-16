@@ -5,7 +5,6 @@
 #Creates plots for the average device and total household power consumption, comparing baseline and controlled in load shaping
 """
 
-
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
@@ -17,7 +16,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'COMBO_Loadshape_WH_HVAC_3'
+input_file_root = 'COMBO_Loadshape_WH_HVAC_7'
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -143,7 +142,7 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
     df_base = pd.read_csv(baseline_file, index_col=0)
     df_con = pd.read_csv(controlled_file, index_col=0)
 
-    # Calculate the number of homes (total rows minus the 'Average' row added prior)
+    # Calculate the number of homes
     num_homes = len(df_base) - 1
 
     # Extract averages and transpose 
@@ -163,7 +162,7 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
     ax1.plot(df_base['Time'], df_base['baseline'], label='Baseline', color='#004C6D', linewidth=2)
     ax1.plot(df_con['Time'], df_con['controlled'], label='Controlled', color='#E26D28', linewidth=2)
     
-    # Setpoint Power Line from B0_Load_Shaping_Controls.csv ---
+    # --- Setpoint Power Line & Shaded Deadband ---
     if setpoint_csv and os.path.exists(setpoint_csv):
         try:
             df_sp = pd.read_csv(setpoint_csv)
@@ -172,38 +171,53 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
             time_col = df_sp.columns[0]
             val_col = df_sp.columns[1]
             
-            # 1. Filter out metadata rows (isolate rows where the first column contains a colon)
+            # 1. Filter out metadata rows
             df_sp_times = df_sp[df_sp[time_col].astype(str).str.contains(':', na=False)].copy()
             
             # 2. Parse time column
-            parsed_times = pd.to_datetime(df_sp_times[time_col], errors='coerce')
-            df_sp_times['Time'] = pd.to_datetime(parsed_times.dt.strftime('%H:%M'), format='%H:%M', errors='coerce')
+            df_sp_times['Time'] = pd.to_datetime(df_sp_times[time_col], format='%H:%M', errors='coerce')
             
-            # 3. Coerce values to numeric (turns 'OFF' into NaN)
+            # 3. Coerce setpoint values to numeric
             df_sp_times['Setpoint'] = pd.to_numeric(df_sp_times[val_col], errors='coerce')
             
-            # 4. Plot the setpoint line
+            # 4. Plot setpoint line
             ax1.plot(df_sp_times['Time'], df_sp_times['Setpoint'], label='Setpoint', color='#2ca02c', linestyle='--', linewidth=2)
-            print(f"[SUCCESS] Setpoint line plotted for {title}")
+            
+            # 5. Extract deadband and shade region if third column exists
+            if len(df_sp.columns) >= 3:
+                db_col = df_sp.columns[2]
+                df_sp_times['Deadband'] = pd.to_numeric(df_sp_times[db_col], errors='coerce')
+                
+                upper_bound = df_sp_times['Setpoint'] + df_sp_times['Deadband']
+                lower_bound = df_sp_times['Setpoint'] - df_sp_times['Deadband']
+                
+                ax1.fill_between(
+                    df_sp_times['Time'], 
+                    lower_bound, 
+                    upper_bound, 
+                    color='#2ca02c', 
+                    alpha=0.2, 
+                    label='Deadband'
+                )
+                
+            print(f"[SUCCESS] Setpoint and deadband plotted for {title}")
             
         except Exception as e:
-            print(f"[WARNING] Could not plot setpoint: {e}")
+            print(f"[WARNING] Could not plot setpoint/deadband: {e}")
 
     ax1.set_ylabel('Power (kW)')
 
     # Update title to include n=... indicator
     ax1.set_title(f"{title} (n={num_homes})")
     ax1.grid(True, alpha=0.3)
-    
-    added_labels = set()
 
     # --- FORMATTING & LEGEND ---
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
     ax1.xaxis.set_major_locator(mdates.HourLocator(interval=2))
     plt.setp(ax1.get_xticklabels(), rotation=45)
 
-    # Cleaned up legend call 
-    ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=3, frameon=False)
+    # Legend formatted with 4 columns to fit all entries on one line
+    ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False)
 
     plt.tight_layout()
     plt.savefig(photo_file, dpi=300, bbox_inches='tight')
@@ -244,7 +258,7 @@ if BATTERY_SIMULATION == "ON":
     save_avg(output_file_ctrl_BATTSOC)
     plot_data(output_file_base_BATTSOC, output_file_ctrl_BATTSOC, 'Average State of Charge per Battery', photo_file_BATTSOC)
 
-# Passing the setpoint CSV path only to the total power plot so it doesn't try to draw a household setpoint on individual device loads
+# Passing setpoint CSV path to the total power plot
 save_avg(output_file_base_total)
 save_avg(output_file_ctrl_total)
 plot_data(output_file_base_total, output_file_ctrl_total, 'Average Total Power Consumption per Household', photo_file_total, setpoint_csv=setpoint_file_path)
