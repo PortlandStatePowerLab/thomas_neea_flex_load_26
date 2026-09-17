@@ -19,8 +19,8 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_Loadshape_WH_HVAC_8'
-Input_folder = "Combo HPWH HVAC All Input Files"
+filename = 'COMBO_Loadshape_WH_HVAC_10'
+Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -264,21 +264,21 @@ WH_NORM_FRAC = 0.2
 WH_SHED_FRAC = 0.05
 WH_END_SHED_FRAC = 0.4
 WH_CP_FRAC = 0.01
-WH_END_CP_FRAC = 0.6
+WH_END_CP_FRAC = 0.8
 WH_GE_FRAC = 0
-WH_END_GE_FRAC = 0.8
+WH_END_GE_FRAC = 1.1
 
-HVAC_ALU_FRAC = 0.5
+HVAC_ALU_FRAC = 0.75
 HVAC_END_ALU_FRAC = 0.001
-HVAC_LU_FRAC = 0.25
-HVAC_END_LU_FRAC = 0.02
+HVAC_LU_FRAC = 0.5
+HVAC_END_LU_FRAC = 0.01
 HVAC_NORM_FRAC = 0.1
-HVAC_SHED_FRAC = 0.02
-HVAC_END_SHED_FRAC = 0.25
+HVAC_SHED_FRAC = 0.01
+HVAC_END_SHED_FRAC = 0.5
 HVAC_CP_FRAC = 0.001
-HVAC_END_CP_FRAC = 0.25
+HVAC_END_CP_FRAC = 0.4
 HVAC_GE_FRAC = 0
-HVAC_END_GE_FRAC = 0.5
+HVAC_END_GE_FRAC = 0.75
 
 DRYER_NORM_FRAC = 0.3
 DRYER_SHED_FRAC = 0.15
@@ -455,6 +455,53 @@ def update_device_command(device_state, new_target, sim_time):
         device_state["active_cmd"] = device_state["target_cmd"]
         
     return device_state["active_cmd"]
+
+def get_interpolated_vpp_settings(sim_time, hourly_settings):
+    """
+    Computes linearly interpolated target power setpoint and deadband for any minute/second
+    within the timestep between the current hour and the next hour node.
+    """
+    hour = sim_time.hour
+    next_hour = (hour + 1) % 24
+    
+    # Calculate fractional hour progress (0.0 to 1.0)
+    frac = (sim_time.minute * 60 + sim_time.second) / 3600.0
+
+    curr_data = hourly_settings.get(hour, {"target": "OFF", "deadband": 0.1})
+    next_data = hourly_settings.get(next_hour, {"target": "OFF", "deadband": 0.1})
+
+    curr_target_raw = str(curr_data["target"]).strip().upper()
+    next_target_raw = str(next_data["target"]).strip().upper()
+
+    # Determine activity states
+    curr_is_active = curr_target_raw != "OFF"
+    next_is_active = next_target_raw != "OFF"
+
+    if not curr_is_active and not next_is_active:
+        return False, 0.0, 0.1
+
+    curr_sp = float(curr_target_raw) if curr_is_active else None
+    next_sp = float(next_target_raw) if next_is_active else None
+    curr_db = float(curr_data.get("deadband", 0.1))
+    next_db = float(next_data.get("deadband", 0.1))
+
+    # Interpolation across transition states
+    if curr_is_active and next_is_active:
+        sp = curr_sp + (next_sp - curr_sp) * frac
+        db = curr_db + (next_db - curr_db) * frac
+        is_active = True
+    elif curr_is_active and not next_is_active:
+        # Smoothly ramp down towards 0 at the end of the event window
+        sp = curr_sp * (1.0 - frac)
+        db = curr_db
+        is_active = True
+    else:
+        # Smoothly ramp up from 0 at the start of the event window
+        sp = next_sp * frac
+        db = next_db
+        is_active = True
+
+    return is_active, sp, db
 
 #########################################
 # CONTROL & INITIALIZATION
@@ -669,18 +716,13 @@ if __name__ == "__main__":
 
     print("Starting Co-Simulation Time Loop...")
     for sim_time in sim_times:
-        current_time_of_day = sim_time.time()
-        current_hour = current_time_of_day.hour
         
-        # Determine VPP state and deadband from the CSV schedule
-        hourly_data = hourly_settings.get(current_hour, {"target": "OFF", "deadband": 0.1})
-        hourly_val = hourly_data["target"]
-        is_vpp_active = str(hourly_val).upper() != "OFF"
+        # Determine smoothly interpolated VPP state and deadband from CSV schedule
+        is_vpp_active, AVERAGE_SETPOINT_KW, AVERAGE_DEADBAND_KW = get_interpolated_vpp_settings(
+            sim_time, hourly_settings
+        )
 
         if is_vpp_active:
-            # Set the new dynamic targets for both power and deadband
-            AVERAGE_SETPOINT_KW = float(hourly_val)
-            AVERAGE_DEADBAND_KW = float(hourly_data["deadband"])
             
             # --- Active Load Shaping Dispatch Logic (Bidirectional & Asymmetrical) ---
             # Calculate raw error first: Error = Setpoint - Actual
@@ -688,12 +730,14 @@ if __name__ == "__main__":
             
             # 1. Apply the deadband directly to the actual error
             if abs(raw_error) <= AVERAGE_DEADBAND_KW:
-                error = 0.0
-                integral_error = 0.0  # Clear memory so it doesn't cause sticky commands
+                # Inside the deadband: freeze control and reset tracking
+                pid_output = 0.0
+                integral_error = 0.0
+                previous_error = 0.0
             else:
+                # Outside the deadband: compute PID normally
                 error = raw_error
-            
-            priority_list = FAST_COMMAND_PRIORITY if error > 0.25 else SLOW_COMMAND_PRIORITY
+                priority_list = FAST_COMMAND_PRIORITY if error > 0.25 else SLOW_COMMAND_PRIORITY
             
             # Discrete-time tracking transformations
             integral_error += error
@@ -870,6 +914,7 @@ if __name__ == "__main__":
         vpp_state_log.append({
             "Time": sim_time,
             "Target Average Power (kW)": AVERAGE_SETPOINT_KW if is_vpp_active else "OFF",
+            "Deadband (kW)": AVERAGE_DEADBAND_KW if is_vpp_active else "OFF",
             "Actual Average Power (kW)": average_power_kw,
             "Aggregate Power (kW)": aggregate_power_kw,
             "WH in NORMAL": sum(1 for h in fleet_data if h["device_states"]["WH"]["active_cmd"] == "NORMAL"),
@@ -942,6 +987,6 @@ if __name__ == "__main__":
     print("Saving VPP state log...")
     df_vpp_log = pd.DataFrame(vpp_state_log)
     df_vpp_log = remove_first_day(df_vpp_log, Start)
-    vpp_log_path = os.path.join(WORKING_DIR, filename + "_VPP_Fleet_States.csv")
+    vpp_log_path = os.path.join(WORKING_DIR, "ready_data", filename, filename + "_VPP_Fleet_States.csv")
     df_vpp_log.to_csv(vpp_log_path, index=False)
     print(f"VPP State Log saved to: {vpp_log_path}")
