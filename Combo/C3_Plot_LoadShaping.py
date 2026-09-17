@@ -1,9 +1,7 @@
-"""
 #Author: Thomas Metzler
 #9/10/2026
 
 #Creates plots for the average device and total household power consumption, comparing baseline and controlled in load shaping
-"""
 
 import pandas as pd
 import os
@@ -17,6 +15,8 @@ fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
 input_file_root = 'COMBO_Loadshape_WH_HVAC_10'
+
+PLOT_COMMAND_FRACTIONS = "OFF"
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -42,6 +42,11 @@ input_file_base  = os.path.join(working_dir, input_file_name_base +".csv")
 input_file_ctrl  = os.path.join(working_dir, input_file_name_ctrl +".csv")
 
 folder_path = os.path.join(working_dir, "Ready_data", input_file_root)
+
+# Fleet States CSV path determination
+fleet_states_file = os.path.join(folder_path, f"{input_file_root}_VPP_Fleet_States.csv")
+if not os.path.exists(fleet_states_file):
+    fleet_states_file = os.path.join(working_dir, f"{input_file_root}_VPP_Fleet_States.csv")
 
 if WH_SIMULATION == "ON":
     output_append_WHpower = "_WH_power"
@@ -115,6 +120,29 @@ photo_file_total = os.path.join(working_dir, "Ready_data", input_file_root, inpu
 # Setpoint file definition
 setpoint_file_path = os.path.join(script_dir, "B0_Load_Shaping_Controls.csv")
 
+
+# ---------------------------------------------------------
+# COMMAND STYLE & COLOR CONFIGURATION
+# ---------------------------------------------------------
+COMMAND_STYLES = {
+    'ALU':    {'label': 'Advanced Load Up', 'color': '#00FF08', 'linestyle': '--', 'linewidth': 1.5},
+    'LOAD':   {'label': 'Load Up',          'color': '#0077FF', 'linestyle': '-.', 'linewidth': 1.5},
+    'LU':     {'label': 'Load Up',          'color': '#0077FF', 'linestyle': '-.', 'linewidth': 1.5},
+    'CP':     {'label': 'Critical Peak',    'color': '#FF6600', 'linestyle': ':',  'linewidth': 1.5},
+    'GE':     {'label': 'Grid Emergency',   'color': '#FF0000', 'linestyle': '--', 'linewidth': 1.5},
+    'SHED':   {'label': 'Shed',             'color': '#FF00DD', 'linestyle': '-.', 'linewidth': 1.5},
+    'S':      {'label': 'Shed',             'color': '#FF00DD', 'linestyle': '-.', 'linewidth': 1.5},
+    'NORMAL': {'label': 'Normal',           'color': '#888888', 'linestyle': ':',  'linewidth': 1.0},
+}
+
+def get_command_style(col_name):
+    col_upper = str(col_name).upper()
+    for key, cfg in COMMAND_STYLES.items():
+        if f" {key}" in col_upper or f"_{key}" in col_upper or col_upper.endswith(key):
+            return cfg['label'], cfg['color'], cfg['linestyle'], cfg['linewidth']
+    return col_name, '#9E9E9E', '-', 1.2
+
+
 #Saves the average of each column as a new row, avoiding duplicates
 def save_avg(file):
     # 1. Read the CSV file into a DataFrame
@@ -137,8 +165,8 @@ def save_avg(file):
     df.to_csv(file, index=False)
 
 
-#plot the data and save the plot
-def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=None):
+# plot the data and save the plot
+def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=None, fleet_csv=None, device_tag=None):
     df_base = pd.read_csv(baseline_file, index_col=0)
     df_con = pd.read_csv(controlled_file, index_col=0)
 
@@ -211,13 +239,71 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
     ax1.set_title(f"{title} (n={num_homes})")
     ax1.grid(True, alpha=0.3)
 
+    if PLOT_COMMAND_FRACTIONS == "ON":
+        # --- SECONDARY AXIS: Command State Fractions ---
+        ax2 = None
+        if fleet_csv and os.path.exists(fleet_csv) and device_tag:
+            try:
+                df_fleet = pd.read_csv(fleet_csv)
+                time_col = df_fleet.columns[0]
+
+                df_fleet_times = df_fleet[df_fleet[time_col].astype(str).str.contains(':', na=False)].copy()
+
+                # Align timestamps to match baseline dates (1900-01-01)
+                raw_times = pd.to_datetime(df_fleet_times[time_col], errors='coerce')
+                df_fleet_times['Time'] = pd.to_datetime(raw_times.dt.strftime('%H:%M'), format='%H:%M', errors='coerce')
+
+                # Map device tags to CSV column prefix conventions
+                tag_map = {'HEAT': 'HVAC', 'AC': 'HVAC', 'DRYER': 'DRY', 'DRY': 'DRY'}
+                search_prefix = tag_map.get(device_tag.upper(), device_tag.upper())
+
+                # Filter relevant columns for the target device
+                relevant_cols = [
+                    c for c in df_fleet.columns 
+                    if c != time_col and search_prefix in c.upper()
+                ]
+
+                if relevant_cols:
+                    ax2 = ax1.twinx()
+                    ax2.set_ylabel('Fraction of units given command')
+                    ax2.set_ylim(0, 1)
+
+                    for col in relevant_cols:
+                        vals = pd.to_numeric(df_fleet_times[col], errors='coerce')
+                        
+                        # Normalize device counts to fractions (0 to 1)
+                        if vals.max() > 1.0:
+                            vals = vals / num_homes
+
+                        cmd_label, color, linestyle, linewidth = get_command_style(col)
+
+                        ax2.plot(
+                            df_fleet_times['Time'], 
+                            vals, 
+                            label=f"Cmd: {cmd_label}", 
+                            color=color, 
+                            linestyle=linestyle, 
+                            linewidth=linewidth, 
+                            alpha=0.5
+                        )
+                    print(f"[SUCCESS] Fleet command states plotted for {title}")
+
+            except Exception as e:
+                print(f"[WARNING] Could not plot fleet state commands: {e}")
+
     # --- FORMATTING & LEGEND ---
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
     ax1.xaxis.set_major_locator(mdates.HourLocator(interval=2))
     plt.setp(ax1.get_xticklabels(), rotation=45)
 
-    # Legend formatted with 4 columns to fit all entries on one line
-    ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False)
+    # Combine legends from both axes
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    if ax2:
+        lines_2, labels_2 = ax2.get_legend_handles_labels()
+        lines_1 += lines_2
+        labels_1 += labels_2
+
+    ax1.legend(lines_1, labels_1, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False)
 
     plt.tight_layout()
     plt.savefig(photo_file, dpi=300, bbox_inches='tight')
@@ -227,36 +313,36 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
 if WH_SIMULATION == "ON":
     save_avg(output_file_base_WH)
     save_avg(output_file_ctrl_WH)
-    plot_data(output_file_base_WH, output_file_ctrl_WH, 'Average Power Consumption per Water Heater', photo_file_WH)
+    plot_data(output_file_base_WH, output_file_ctrl_WH, 'Average Power Consumption per Water Heater', photo_file_WH, fleet_csv=fleet_states_file, device_tag='WH')
 
 if HVAC_SIMULATION == "ON":
     save_avg(output_file_base_AC)
     save_avg(output_file_ctrl_AC)
-    plot_data(output_file_base_AC, output_file_ctrl_AC, 'Average Power Consumption per AC System', photo_file_AC)
+    plot_data(output_file_base_AC, output_file_ctrl_AC, 'Average Power Consumption per AC System', photo_file_AC, fleet_csv=fleet_states_file, device_tag='AC')
     save_avg(output_file_base_HEAT)
     save_avg(output_file_ctrl_HEAT)
-    plot_data(output_file_base_HEAT, output_file_ctrl_HEAT, 'Average Power Consumption per Heating System', photo_file_HEAT)
+    plot_data(output_file_base_HEAT, output_file_ctrl_HEAT, 'Average Power Consumption per Heating System', photo_file_HEAT, fleet_csv=fleet_states_file, device_tag='HEAT')
 
 if DRYER_SIMULATION == "ON":
     save_avg(output_file_base_Dryer)
     save_avg(output_file_ctrl_Dryer)
-    plot_data(output_file_base_Dryer, output_file_ctrl_Dryer, 'Average Power Consumption per Dryer', photo_file_Dryer)
+    plot_data(output_file_base_Dryer, output_file_ctrl_Dryer, 'Average Power Consumption per Dryer', photo_file_Dryer, fleet_csv=fleet_states_file, device_tag='Dryer')
 
 if EV_SIMULATION == "ON":
     save_avg(output_file_base_EV)
     save_avg(output_file_ctrl_EV)
-    plot_data(output_file_base_EV, output_file_ctrl_EV, 'Average Power Consumption per Electric Vehicle', photo_file_EV)
+    plot_data(output_file_base_EV, output_file_ctrl_EV, 'Average Power Consumption per Electric Vehicle', photo_file_EV, fleet_csv=fleet_states_file, device_tag='EV')
     save_avg(output_file_base_EVSOC)
     save_avg(output_file_ctrl_EVSOC)
-    plot_data(output_file_base_EVSOC, output_file_ctrl_EVSOC, 'Average State of Charge per Electric Vehicle', photo_file_EVSOC)
+    plot_data(output_file_base_EVSOC, output_file_ctrl_EVSOC, 'Average State of Charge per Electric Vehicle', photo_file_EVSOC, fleet_csv=fleet_states_file, device_tag='EV')
 
 if BATTERY_SIMULATION == "ON":
     save_avg(output_file_base_BATT)
     save_avg(output_file_ctrl_BATT)
-    plot_data(output_file_base_BATT, output_file_ctrl_BATT, 'Average Power Consumption per Battery', photo_file_BATT)
+    plot_data(output_file_base_BATT, output_file_ctrl_BATT, 'Average Power Consumption per Battery', photo_file_BATT, fleet_csv=fleet_states_file, device_tag='BATT')
     save_avg(output_file_base_BATTSOC)
     save_avg(output_file_ctrl_BATTSOC)
-    plot_data(output_file_base_BATTSOC, output_file_ctrl_BATTSOC, 'Average State of Charge per Battery', photo_file_BATTSOC)
+    plot_data(output_file_base_BATTSOC, output_file_ctrl_BATTSOC, 'Average State of Charge per Battery', photo_file_BATTSOC, fleet_csv=fleet_states_file, device_tag='BATT')
 
 # Passing setpoint CSV path to the total power plot
 save_avg(output_file_base_total)
