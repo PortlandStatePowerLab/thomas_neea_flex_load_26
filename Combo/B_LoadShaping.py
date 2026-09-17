@@ -19,8 +19,8 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_Loadshape_WH_HVAC_7'
-Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
+filename = 'COMBO_Loadshape_WH_HVAC_8'
+Input_folder = "Combo HPWH HVAC All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
