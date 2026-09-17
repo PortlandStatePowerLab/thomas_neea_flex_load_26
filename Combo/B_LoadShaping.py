@@ -19,7 +19,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_Loadshape_WH_HVAC_10'
+filename = 'COMBO_Loadshape_WH_HVAC_12'
 Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
 
 # Original OCHRE defaults folder
@@ -731,7 +731,7 @@ if __name__ == "__main__":
             # 1. Apply the deadband directly to the actual error
             if abs(raw_error) <= AVERAGE_DEADBAND_KW:
                 # Inside the deadband: freeze control and reset tracking
-                pid_output = 0.0
+                # pid_output = 0.0
                 integral_error = 0.0
                 previous_error = 0.0
             else:
@@ -987,6 +987,7 @@ if __name__ == "__main__":
     print("Saving VPP state log...")
     df_vpp_log = pd.DataFrame(vpp_state_log)
     df_vpp_log = remove_first_day(df_vpp_log, Start)
+    os.makedirs(os.path.join(WORKING_DIR, "ready_data", filename))
     vpp_log_path = os.path.join(WORKING_DIR, "ready_data", filename, filename + "_VPP_Fleet_States.csv")
     df_vpp_log.to_csv(vpp_log_path, index=False)
     print(f"VPP State Log saved to: {vpp_log_path}")

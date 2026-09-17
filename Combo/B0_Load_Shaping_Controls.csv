@@ -40,5 +40,5 @@ SHED,ON,
 CP,ON,
 GE,ON,
 KP,1,Proportional gain
-KI,1,Integral gain
-KD,1,Derivative gain
+KI,0.1,Integral gain
+KD,0,Derivative gain

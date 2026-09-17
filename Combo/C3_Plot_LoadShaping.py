@@ -14,9 +14,9 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'COMBO_Loadshape_WH_HVAC_10'
+input_file_root = 'COMBO_Loadshape_WH_HVAC_12'
 
-PLOT_COMMAND_FRACTIONS = "OFF"
+PLOT_COMMAND_FRACTIONS = "ON"  # Set to "ON" or "OFF"
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV
@@ -120,7 +120,6 @@ photo_file_total = os.path.join(working_dir, "Ready_data", input_file_root, inpu
 # Setpoint file definition
 setpoint_file_path = os.path.join(script_dir, "B0_Load_Shaping_Controls.csv")
 
-
 # ---------------------------------------------------------
 # COMMAND STYLE & COLOR CONFIGURATION
 # ---------------------------------------------------------
@@ -142,7 +141,6 @@ def get_command_style(col_name):
             return cfg['label'], cfg['color'], cfg['linestyle'], cfg['linewidth']
     return col_name, '#9E9E9E', '-', 1.2
 
-
 #Saves the average of each column as a new row, avoiding duplicates
 def save_avg(file):
     # 1. Read the CSV file into a DataFrame
@@ -163,7 +161,6 @@ def save_avg(file):
 
     # 5. Save back to a CSV file
     df.to_csv(file, index=False)
-
 
 # plot the data and save the plot
 def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=None, fleet_csv=None, device_tag=None):
@@ -215,7 +212,6 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
             if len(df_sp.columns) >= 3:
                 db_col = df_sp.columns[2]
                 df_sp_times['Deadband'] = pd.to_numeric(df_sp_times[db_col], errors='coerce')
-                
                 upper_bound = df_sp_times['Setpoint'] + df_sp_times['Deadband']
                 lower_bound = df_sp_times['Setpoint'] - df_sp_times['Deadband']
                 
@@ -227,7 +223,6 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
                     alpha=0.2, 
                     label='Deadband'
                 )
-                
             print(f"[SUCCESS] Setpoint and deadband plotted for {title}")
             
         except Exception as e:
@@ -239,9 +234,10 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
     ax1.set_title(f"{title} (n={num_homes})")
     ax1.grid(True, alpha=0.3)
 
-    if PLOT_COMMAND_FRACTIONS == "ON":
+    # Secondary axis initialized outside IF block to prevent UnboundLocalError
+    ax2 = None
+    if str(PLOT_COMMAND_FRACTIONS).strip().upper() in ["ON", "TRUE", "1"]:
         # --- SECONDARY AXIS: Command State Fractions ---
-        ax2 = None
         if fleet_csv and os.path.exists(fleet_csv) and device_tag:
             try:
                 df_fleet = pd.read_csv(fleet_csv)
@@ -296,7 +292,7 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
     ax1.xaxis.set_major_locator(mdates.HourLocator(interval=2))
     plt.setp(ax1.get_xticklabels(), rotation=45)
 
-    # Combine legends from both axes
+    # Combine legends
     lines_1, labels_1 = ax1.get_legend_handles_labels()
     if ax2:
         lines_2, labels_2 = ax2.get_legend_handles_labels()
