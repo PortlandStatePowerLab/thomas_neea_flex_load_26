@@ -10,11 +10,11 @@ import matplotlib.ticker as ticker
 import matplotlib.dates as mdates
 import datetime as dt
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
+script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else '.'
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'COMBO_Loadshape_WH_HVAC_12'
+input_file_root = 'COMBO_Loadshape_WH_HVAC_Dryer_2'
 
 PLOT_COMMAND_FRACTIONS = "ON"  # Set to "ON" or "OFF"
 
@@ -141,7 +141,7 @@ def get_command_style(col_name):
             return cfg['label'], cfg['color'], cfg['linestyle'], cfg['linewidth']
     return col_name, '#9E9E9E', '-', 1.2
 
-#Saves the average of each column as a new row, avoiding duplicates
+# Saves the average of each column as a new row, avoiding duplicates
 def save_avg(file):
     # 1. Read the CSV file into a DataFrame
     df = pd.read_csv(file)
@@ -162,7 +162,7 @@ def save_avg(file):
     # 5. Save back to a CSV file
     df.to_csv(file, index=False)
 
-# plot the data and save the plot
+# Plot the data and save the plot
 def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=None, fleet_csv=None, device_tag=None):
     df_base = pd.read_csv(baseline_file, index_col=0)
     df_con = pd.read_csv(controlled_file, index_col=0)
@@ -212,6 +212,16 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
             if len(df_sp.columns) >= 3:
                 db_col = df_sp.columns[2]
                 df_sp_times['Deadband'] = pd.to_numeric(df_sp_times[db_col], errors='coerce')
+
+            # Append 00:00 value offset by +1 day (24:00) to bridge 23:00 to 00:00 end-of-day loop
+            if not df_sp_times.empty:
+                loop_row = df_sp_times.iloc[0].copy()
+                loop_row['Time'] = loop_row['Time'] + pd.Timedelta(days=1)
+                df_sp_times = pd.concat([df_sp_times, pd.DataFrame([loop_row])], ignore_index=True)
+
+            ax1.plot(df_sp_times['Time'], df_sp_times['Setpoint'], label='Setpoint', color='#2ca02c', linestyle='--', linewidth=2)
+            
+            if 'Deadband' in df_sp_times.columns:
                 upper_bound = df_sp_times['Setpoint'] + df_sp_times['Deadband']
                 lower_bound = df_sp_times['Setpoint'] - df_sp_times['Deadband']
                 

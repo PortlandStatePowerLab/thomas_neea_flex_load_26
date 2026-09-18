@@ -14,12 +14,13 @@ import concurrent.futures
 from pathlib import Path
 import ochre
 import random
+import numpy as np
 
 #########################################
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_Loadshape_WH_HVAC_12'
+filename = 'COMBO_Loadshape_WH_HVAC_Dryer_2'
 Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
 
 # Original OCHRE defaults folder
@@ -572,13 +573,6 @@ def determine_control(sim_time, active_commands, home_charger_kw=None):
         ctrl_signal['HVAC Cooling'] = {'Setpoint': cool_cfg[0], 'Deadband': cool_cfg[1], 'Load Fraction': 1}
         ctrl_signal['HVAC Heating'] = {'Setpoint': heat_cfg[0], 'Deadband': heat_cfg[1], 'Load Fraction': 1}
 
-    # Add dryers if simulated
-    if DRYER_SIMULATION == "ON":
-        dryer_mode = active_commands.get("DRYER", "NORMAL")
-        frac = dryer_duty_cycle_shed if dryer_mode == "SHED" else (dryer_duty_cycle_cp if dryer_mode == "CP" else 1.0)
-        ctrl_signal['Clothes Dryer'] = {
-            'Load Fraction': frac  # 1 = Normal schedule operation
-        }
 
     # EV control (tracks global mode)
     if EV_SIMULATION == "ON" and home_charger_kw is not None:
@@ -606,12 +600,26 @@ def determine_control(sim_time, active_commands, home_charger_kw=None):
 
     return ctrl_signal
 
-def initialize_home(home_path, weather_file_path):
+def init_base(home_path, weather_file_path):
     filtered_sched_file = filter_schedules(home_path)
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
+    
+    dw = Dwelling(name=f"Base_{os.path.basename(home_path)}",
+                  start_time=Start,
+                  time_res=dt.timedelta(minutes=t_res),
+                  duration=dt.timedelta(days=Duration),
+                  hpxml_file=hpxml_file,
+                  hpxml_schedule_file=filtered_sched_file,
+                  weather_file=weather_file_path,
+                  verbosity=7)
+    return {"path": home_path, "dw": dw}
 
+def init_ctrl(home_path, weather_file_path):
+    hpxml_file = os.path.join(home_path, XML_ADDRESS)
+    # Uses the pre-shifted schedule generated in Pass 2
+    ctrl_sched_file = os.path.join(home_path, 'filtered_schedules_ctrl.csv')
+    
     equipment = {}
-
     if WH_SIMULATION == "ON":
         equipment['Water Heating'] = {
             "Initial Temperature (C)": WH_TinitC, 
@@ -622,33 +630,22 @@ def initialize_home(home_path, weather_file_path):
             "Upper Node Weight": 0.75,
         }
 
+    dw = Dwelling(name=f"Ctrl_{os.path.basename(home_path)}",
+                  start_time=Start,
+                  time_res=dt.timedelta(minutes=t_res),
+                  duration=dt.timedelta(days=Duration),
+                  hpxml_file=hpxml_file,
+                  hpxml_schedule_file=ctrl_sched_file,
+                  weather_file=weather_file_path,
+                  verbosity=7,
+                  Equipment=equipment)
     
-    dwelling_args_local = {
-        "start_time": Start,
-        "time_res": dt.timedelta(minutes=t_res),
-        "duration": dt.timedelta(days=Duration),
-        "hpxml_file": hpxml_file,
-        "hpxml_schedule_file": filtered_sched_file,
-        "weather_file": weather_file_path,
-        "verbosity": 7,
-        "Equipment": equipment
-    }
-
-    base_dwelling = Dwelling(name=f"Base_{os.path.basename(home_path)}", **dwelling_args_local)
-    sim_dwelling = Dwelling(name=f"Ctrl_{os.path.basename(home_path)}", **dwelling_args_local)
-    return base_dwelling, sim_dwelling
-
-def init_fleet_worker(home):
-    """Worker function to initialize dwellings in parallel"""
-    base_dw, sim_dw = initialize_home(home, WEATHER_FILE)
     return {
-        "base": base_dw, 
-        "sim": sim_dw, 
-        "path": home,
+        "sim": dw, 
+        "path": home_path,
         "device_states": {
             "WH": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": WH_RESPONSE_MIN, "max_delay": WH_RESPONSE_MAX},
             "HVAC": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": HVAC_RESPONSE_MIN, "max_delay": HVAC_RESPONSE_MAX},
-            "DRYER": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": 0, "max_delay": 0},
             "EV": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": 0, "max_delay": 0},
             "BATTERY": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": 0, "max_delay": 0},
         }
@@ -682,32 +679,266 @@ if __name__ == "__main__":
     homes = find_all_homes(INPUT_DIR)
     print(f"Found {len(homes)} homes")
 
-    # --- 1. Parallel Fleet Initialization ---
-    fleet_data = []
-    print("Initializing dwellings (in parallel)...")
+    if not homes:
+        print("No homes found. Exiting.")
+        exit()
+
+    # =========================================================================
+    # PASS 1: OCHRE BASELINE RUN
+    # =========================================================================
+    print(f"--- PASS 1: Running Baseline OCHRE for {len(homes)} homes ---")
+    baseline_dwellings = []
+    successful_homes = [] # Track which homes actually survived initialization
+    
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(init_fleet_worker, home) for home in homes]
+        # Use a dictionary to map the future back to the home path for logging
+        futures = {executor.submit(init_base, h, WEATHER_FILE): h for h in homes}
+        for f in concurrent.futures.as_completed(futures):
+            home_path = futures[f]
+            try:
+                baseline_dwellings.append(f.result())
+                successful_homes.append(home_path)
+            except Exception as e:
+                # Catch the error, print a warning, and move on
+                print(f"Skipping {os.path.basename(home_path)} due to init error: {e}")
+                
+    # Reassign the main homes list so Passes 2 and 3 completely ignore the broken homes
+    homes = successful_homes
+
+    if not homes:
+        print("No dwellings were initialized. Exiting.")
+        exit()
+            
+    sim_times = baseline_dwellings[0]["dw"].sim_times
+    
+    # Run Baseline Loop
+    for t in sim_times:
+        for b in baseline_dwellings:
+            b["dw"].update()
+            
+    # Extract True Baseline Data
+    baseline_data = {}
+    for b in baseline_dwellings:
+        df, _, _ = b["dw"].finalize()
+        baseline_data[b["path"]] = df
+
+    # =========================================================================
+    # PASS 2: DRYER SCHEDULE SHIFTING (PYTHON VPP CONTROLLER)
+    # =========================================================================
+    print("--- PASS 2: Calculating Shifted Schedules with PID ---")
+    fleet_data_dryer = []
+    
+    # Assume the schedule CSV represents a full year starting on Jan 1 of the simulation year
+    start_of_year = dt.datetime(Start.year, 1, 1, 0, 0)
+    
+    for home in homes:
+        orig_sched_file = os.path.join(home, 'filtered_schedules.csv')
+        df_sched = pd.read_csv(orig_sched_file)
+        
+        if DRYER_SIMULATION == "ON":
+            # Dynamically map each simulation time to the correct CSV row index 
+            # based on the elapsed fraction of the year.
+            time_to_idx = {}
+            for st in sim_times:
+                elapsed = st - start_of_year
+                # Calculate fraction of a standard non-leap year
+                frac = elapsed.total_seconds() / (365 * 24 * 3600)
+                idx = int(frac * len(df_sched))
+                
+                # Prevent out-of-bounds indexing at the very end of the year
+                time_to_idx[st] = min(idx, len(df_sched) - 1)
+            
+            df_base_out = baseline_data[home]
+            
+            dryer_cols = [c for c in df_sched.columns if 'dryer' in c.lower()]
+            dryer_col = dryer_cols[0] if dryer_cols else None
+            
+            orig_vals = df_sched[dryer_col].values if dryer_col else np.zeros(len(df_sched))
+            max_cap = orig_vals.max() if orig_vals.max() > 0 else 1.0
+            
+            fleet_data_dryer.append({
+                "path": home,
+                "df_sched": df_sched,
+                "df_base_out": df_base_out,
+                "dryer_col": dryer_col,
+                "orig_vals": orig_vals,
+                "new_vals": list(orig_vals), # Copy to preserve data outside simulation bounds
+                "max_cap": max_cap,
+                "mode": "NORMAL",
+                "pending_off": False,
+                "work_queue": 0.0,
+                "time_to_idx": time_to_idx, # Store the lookup dict here for convenience
+                "mode_log": {} # Store the dryer state per timestep for Pass 3 logging
+            })
+        else:
+            # If dryer logic is OFF, just pass the schedule through
+            df_sched.to_csv(os.path.join(home, 'filtered_schedules_ctrl.csv'), index=False)
+
+    if DRYER_SIMULATION == "ON":
+        average_power_kw_dryer = 0.0 
+        previous_average_power_kw_dryer = 0.0 
+        integral_error_dryer = 0.0
+        previous_error_dryer = 0.0
+        num_homes_dryer = len(fleet_data_dryer)
+        
+        for current_time in sim_times:
+            # Determine smoothly interpolated VPP state and deadband from CSV schedule
+            is_vpp_active, AVERAGE_SETPOINT_KW, AVERAGE_DEADBAND_KW = get_interpolated_vpp_settings(
+                current_time, hourly_settings
+            )
+            
+            # 1. Update Energy Queues
+            for h in fleet_data_dryer:
+                csv_idx = h["time_to_idx"][current_time] # Find the true row for this timestamp
+                val = h["orig_vals"][csv_idx]
+                if h["max_cap"] > 0 and val > 0:
+                    h["work_queue"] += (val / h["max_cap"])
+                    
+            # 2. VPP / PID Logic
+            if is_vpp_active:
+                error = AVERAGE_SETPOINT_KW - previous_average_power_kw_dryer
+                integral_error_dryer += error
+
+                # --- ANTI-WINDUP CLAMPING ---
+                # Prevent the integral from building up a massive "memory" when error stays positive or negative for hours
+                MAX_INTEGRAL = 0.1
+                MIN_INTEGRAL = -0.5
+                integral_error_dryer = max(min(integral_error_dryer, MAX_INTEGRAL), MIN_INTEGRAL)
+
+                derivative_error_dryer = error - previous_error_dryer
+                previous_error_dryer = error
+                
+                pid_output = (KP * error) + (KI * integral_error_dryer) + (KD * derivative_error_dryer)
+                
+                if pid_output < -AVERAGE_DEADBAND_KW:
+                    total_kw_to_drop = abs(pid_output) * num_homes_dryer
+                    
+                    # Cascade into deeper shed commands for Dryers[cite: 3]
+                    drop_transitions = [
+                        ("NORMAL", "SHED", 1.0 - dryer_duty_cycle_shed),
+                        ("SHED", "CP", dryer_duty_cycle_shed - dryer_duty_cycle_cp),
+                        ("CP", "GE", dryer_duty_cycle_cp - dryer_duty_cycle_ge)
+                    ]
+                    
+                    for current_state, next_state, drop_frac in drop_transitions:
+                        if total_kw_to_drop <= 0: break
+                        available_homes = [h for h in fleet_data_dryer if h["mode"] == current_state and h["work_queue"] > 1e-4]
+                        random.shuffle(available_homes)
+                        
+                        drop_per_unit = drop_frac * DRYER_CAP_KW
+                        if drop_per_unit > 0:
+                            units_to_shed = int(total_kw_to_drop / drop_per_unit)
+                            shed_applied = min(units_to_shed, len(available_homes))
+                            for h in available_homes[:shed_applied]:
+                                h["mode"] = next_state
+                                h["pending_off"] = True
+                            total_kw_to_drop -= shed_applied * drop_per_unit
+                        
+                elif pid_output > AVERAGE_DEADBAND_KW:
+                    total_kw_to_add = pid_output * num_homes_dryer
+                    
+                    # Cascade into restored load commands for Dryers[cite: 3]
+                    add_transitions = [
+                        ("GE", "CP", dryer_duty_cycle_cp - dryer_duty_cycle_ge),
+                        ("CP", "SHED", dryer_duty_cycle_shed - dryer_duty_cycle_cp),
+                        ("SHED", "NORMAL", 1.0 - dryer_duty_cycle_shed)
+                    ]
+                    
+                    for current_state, next_state, add_frac in add_transitions:
+                        if total_kw_to_add <= 0: break
+                        available_homes = [h for h in fleet_data_dryer if h["mode"] == current_state]
+                        random.shuffle(available_homes)
+                        
+                        add_per_unit = add_frac * DRYER_CAP_KW
+                        if add_per_unit > 0:
+                            units_to_restore = int(total_kw_to_add / add_per_unit)
+                            restored_applied = min(units_to_restore, len(available_homes))
+                            for h in available_homes[:restored_applied]:
+                                h["mode"] = next_state
+                                h["pending_off"] = True
+                            total_kw_to_add -= restored_applied * add_per_unit
+            else:
+                for h in fleet_data_dryer:
+                    if h["mode"] in ["SHED", "CP", "GE"]:
+                        h["mode"] = "NORMAL"
+                        h["pending_off"] = True
+                integral_error_dryer = 0.0
+                previous_error_dryer = 0.0
+                
+            # 3. Dispense Energy & Build New Schedule
+            current_step_aggregate = 0.0
+            
+            for h in fleet_data_dryer:
+                # Store the state for Pass 3 logging
+                h["mode_log"][current_time] = h["mode"]
+                
+                if h["pending_off"]:
+                    dispense = 0.0
+                    h["pending_off"] = False
+                elif h["work_queue"] > 1e-4:
+                    if h["mode"] == "SHED":
+                        dispense = min(dryer_duty_cycle_shed, h["work_queue"])
+                    elif h["mode"] == "CP":
+                        dispense = min(dryer_duty_cycle_cp, h["work_queue"])
+                    elif h["mode"] == "GE":
+                        dispense = min(dryer_duty_cycle_ge, h["work_queue"])
+                    else:
+                        dispense = min(1.0, h["work_queue"])
+                    h["work_queue"] = max(0.0, h["work_queue"] - dispense)
+                else:
+                    dispense = 0.0
+                    h["work_queue"] = 0.0
+                    
+                val_kw = dispense * h["max_cap"]
+                h["new_vals"][csv_idx] = val_kw
+
+                # For the baseline extraction, you still need an index that starts at 0 
+                # since df_base_out only contains the 2 simulation days
+                sim_idx = list(sim_times).index(current_time) 
+                
+                # Calculate True Whole-Home Power for PID feedback
+                base_total_kw = h["df_base_out"]['Total Electric Power (kW)'].iloc[sim_idx]
+                base_dryer_kw = h["df_base_out"].get('Clothes Dryer Electric Power (kW)', pd.Series([0]*len(sim_times))).iloc[sim_idx]
+                
+                estimated_ctrl_total = (base_total_kw - base_dryer_kw) + val_kw
+                current_step_aggregate += estimated_ctrl_total
+
+            previous_average_power_kw_dryer = current_step_aggregate / num_homes_dryer
+
+        # Save Shifted Schedules
+        valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
+        for h in fleet_data_dryer:
+            df = h["df_sched"]
+            filtered_cols = [col for col in df.columns if col in valid_schedule_names or col == 'Time']
+            
+            df_ctrl = df[filtered_cols].copy()
+            if h["dryer_col"]:
+                df_ctrl[h["dryer_col"]] = h["new_vals"]
+            df_ctrl.to_csv(os.path.join(h["path"], 'filtered_schedules_ctrl.csv'), index=False)
+
+    # =========================================================================
+    # PASS 3: OCHRE CONTROL RUN (REACTIVE LOAD SHAPING)
+    # =========================================================================
+    print("--- PASS 3: Running Controlled OCHRE Simulation ---")
+    fleet_data = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(init_ctrl, h, WEATHER_FILE) for h in homes]
         for f in concurrent.futures.as_completed(futures):
             try:
                 fleet_data.append(f.result())
             except Exception as e:
                 print("Initialization failed:", e)
 
-    if not fleet_data:
-        print("No dwellings were initialized. Exiting.")
-        exit()
-
     num_homes = len(fleet_data)
-    
-    # --- 2. Co-Simulation Time Loop Setup ---
-    sim_times = fleet_data[0]["base"].sim_times
     average_power_kw = 0.0
-
     vpp_state_log = [] # Add this line to initialize the log
 
     # PID State tracking variables
     integral_error = 0.0
     previous_error = 0.0
+    
+    # Fast lookup dictionary for retrieving Pass 2 Dryer states
+    dryer_mode_lookup = {h["path"]: h.get("mode_log", {}) for h in fleet_data_dryer}
 
     enabled_simulations = {
         "WH": WH_SIMULATION, "HVAC": HVAC_SIMULATION, "DRYER": DRYER_SIMULATION,
@@ -763,6 +994,8 @@ if __name__ == "__main__":
                 for dev in priority_list:
                     if total_kw_to_drop <= 0: break
                     if enabled_simulations.get(dev) != "ON": continue
+
+                    if dev == "DRYER": continue
                     
                     for active_cmd in ["ALU", "LU", "LOAD"]:
                         homes_to_end = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == active_cmd]
@@ -792,6 +1025,8 @@ if __name__ == "__main__":
                     for dev in priority_list:
                         if total_kw_to_drop <= 0: break
                         if enabled_simulations.get(dev) != "ON": continue
+
+                        if dev == "DRYER": continue
                         
                         if next_state in ALLOWED_COMMANDS:
                             available_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == current_state]
@@ -815,6 +1050,8 @@ if __name__ == "__main__":
                 for dev in priority_list:
                     if total_kw_to_add <= 0: break
                     if enabled_simulations.get(dev) != "ON": continue
+
+                    if dev == "DRYER": continue
                     
                     for active_cmd in ["GE", "CP", "SHED"]:
                         homes_to_end = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == active_cmd]
@@ -840,6 +1077,8 @@ if __name__ == "__main__":
                     for dev in priority_list:
                         if total_kw_to_add <= 0: break
                         if enabled_simulations.get(dev) != "ON": continue
+
+                        if dev == "DRYER": continue
                         
                         if next_state in ALLOWED_COMMANDS:
                             available_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == current_state]
@@ -869,21 +1108,20 @@ if __name__ == "__main__":
         current_step_aggregate_power = 0.0
         
         for home_data in fleet_data:
-            base_dw = home_data["base"]
             sim_dw = home_data["sim"]
             
             # Evaluate delayed reactive commands across all enabled devices
             active_cmds = {}
             for dev_name, dev_state in home_data["device_states"].items():
-                active_cmds[dev_name] = update_device_command(
-                    dev_state,
-                    dev_state["target_cmd"],
-                    sim_time
-                )
-            
-            # 1. Baseline Update
-            base_ctrl = {"Water Heating": {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1}}
-            base_dw.update(control_signal=base_ctrl)
+                # Pass dryer state statically, otherwise execute delay logic
+                if dev_name == "DRYER":
+                    active_cmds[dev_name] = dryer_mode_lookup.get(home_data["path"], {}).get(sim_time, "NORMAL")
+                else:
+                    active_cmds[dev_name] = update_device_command(
+                        dev_state,
+                        dev_state["target_cmd"],
+                        sim_time
+                    )
             
             # 2. Controlled Update (driven purely by the VPP state now)
             control_cmd = determine_control(
@@ -929,10 +1167,10 @@ if __name__ == "__main__":
             "HVAC in SHED": sum(1 for h in fleet_data if h["device_states"]["HVAC"]["active_cmd"] in ["SHED"]),
             "HVAC in CP": sum(1 for h in fleet_data if h["device_states"]["HVAC"]["active_cmd"] in ["CP"]),
             "HVAC in GE": sum(1 for h in fleet_data if h["device_states"]["HVAC"]["active_cmd"] in ["GE"]),
-            "DRY in NORMAL": sum(1 for h in fleet_data if h["device_states"]["DRYER"]["active_cmd"] == "NORMAL"),
-            "DRY in SHED": sum(1 for h in fleet_data if h["device_states"]["DRYER"]["active_cmd"] in ["SHED"]),
-            "DRY in CP": sum(1 for h in fleet_data if h["device_states"]["DRYER"]["active_cmd"] in ["CP"]),
-            "DRY in GE": sum(1 for h in fleet_data if h["device_states"]["DRYER"]["active_cmd"] in ["GE"]),
+            "DRY in NORMAL": sum(1 for h in fleet_data if dryer_mode_lookup.get(h["path"], {}).get(sim_time, "NORMAL") == "NORMAL"),
+            "DRY in SHED": sum(1 for h in fleet_data if dryer_mode_lookup.get(h["path"], {}).get(sim_time, "NORMAL") == "SHED"),
+            "DRY in CP": sum(1 for h in fleet_data if dryer_mode_lookup.get(h["path"], {}).get(sim_time, "NORMAL") == "CP"),
+            "DRY in GE": sum(1 for h in fleet_data if dryer_mode_lookup.get(h["path"], {}).get(sim_time, "NORMAL") == "GE"),
             "EV in NORMAL": sum(1 for h in fleet_data if h["device_states"]["EV"]["active_cmd"] == "NORMAL"),
             "EV in SHED": sum(1 for h in fleet_data if h["device_states"]["EV"]["active_cmd"] in ["SHED"]),
             "EV in CP": sum(1 for h in fleet_data if h["device_states"]["EV"]["active_cmd"] in ["CP"]),
@@ -943,7 +1181,6 @@ if __name__ == "__main__":
             "BATT in SHED": sum(1 for h in fleet_data if h["device_states"]["BATTERY"]["active_cmd"] in ["SHED"]),
             "BATT in CP": sum(1 for h in fleet_data if h["device_states"]["BATTERY"]["active_cmd"] in ["CP"]),
             "BATT in GE": sum(1 for h in fleet_data if h["device_states"]["BATTERY"]["active_cmd"] in ["GE"]),
-
         })
 
     # --- 3. Finalize and Output Data ---
@@ -968,7 +1205,8 @@ if __name__ == "__main__":
         results_dir = os.path.join(home_path, "Results")
         os.makedirs(results_dir, exist_ok=True)
         
-        df_base, _, _ = home_data["base"].finalize()
+        # Pull baseline data calculated from pass 1
+        df_base = baseline_data[home_path]
         df_ctrl, _, _ = home_data["sim"].finalize()
         
         df_base = remove_first_day(df_base, Start)
@@ -987,7 +1225,7 @@ if __name__ == "__main__":
     print("Saving VPP state log...")
     df_vpp_log = pd.DataFrame(vpp_state_log)
     df_vpp_log = remove_first_day(df_vpp_log, Start)
-    os.makedirs(os.path.join(WORKING_DIR, "ready_data", filename))
+    os.makedirs(os.path.join(WORKING_DIR, "ready_data", filename), exist_ok=True)
     vpp_log_path = os.path.join(WORKING_DIR, "ready_data", filename, filename + "_VPP_Fleet_States.csv")
     df_vpp_log.to_csv(vpp_log_path, index=False)
     print(f"VPP State Log saved to: {vpp_log_path}")
