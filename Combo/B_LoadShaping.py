@@ -15,13 +15,16 @@ from pathlib import Path
 import ochre
 import random
 import numpy as np
+import xml.etree.ElementTree as ET
+import shutil
+
 
 #########################################
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_Loadshape_WH_HVAC_Dryer_2'
-Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
+filename = 'COMBO_Loadshape_WH_HVAC_Dryer_EV_BATT_1'
+Input_folder = "Combo HPWH HVAC Dryer EV Almost All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -375,6 +378,44 @@ HEAT_TdeadbandC = f_to_c_DB(HEAT_TdeadbandF)
 HEAT_TinitC = f_to_c(HEAT_TinitF)
 
 #########################################
+# HPXML FUNCTIONS
+#########################################
+
+def get_ev_charger_power(hpxml_path, default_kw=20):
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+        for charger in root.findall('.//ElectricVehicleCharger'):
+            charge_elem = charger.find('ChargingPower')
+            if charge_elem is not None and charge_elem.text:
+                return float(charge_elem.text) / 1000
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Error: {e}")
+    return default_kw
+
+def get_ev_capacity_or_range(hpxml_path, default_capacity_kwh=60.0):
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+        for battery in root.findall('.//Battery'):
+            usable = battery.find('UsableCapacity/Value')
+            if usable is not None and usable.text:
+                return float(usable.text)
+            nominal = battery.find('NominalCapacity/Value')
+            if nominal is not None and nominal.text:
+                return float(nominal.text)
+    except Exception as e:
+        pass
+    return default_capacity_kwh
+
+
+#########################################
 # HELPER FUNCTIONS
 #########################################
 
@@ -383,8 +424,21 @@ def filter_schedules(home_path):
     filtered_sched_file = os.path.join(home_path, 'filtered_schedules.csv')
 
     df_sched = pd.read_csv(orig_sched_file)
+    
+    # Inject the EV charging schedule if missing
+    if 'electric_vehicle_charging' not in df_sched.columns:
+        df_sched['electric_vehicle_charging'] = 1.0
+
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
+    
+    filtered_columns = [
+        col for col in df_sched.columns 
+        if col in valid_schedule_names 
+        or 'ev' in col.lower() 
+        or 'vehicle' in col.lower()
+        or 'plug' in col.lower()
+    ]
+    
     dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
     
     if dropped_columns:
@@ -600,49 +654,86 @@ def determine_control(sim_time, active_commands, home_charger_kw=None):
 
     return ctrl_signal
 
+def force_ev_schedules(sched_file):
+    """Guarantees the exact electric_vehicle_charging column expected by OCHRE exists."""
+    df = pd.read_csv(sched_file)
+    if 'electric_vehicle_charging' not in df.columns:
+        df['electric_vehicle_charging'] = 1.0  # Default to always plugged in
+        df.to_csv(sched_file, index=False)
+
 def init_base(home_path, weather_file_path):
     filtered_sched_file = filter_schedules(home_path)
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
     
+    # --- GUARANTEE COLUMNS EXIST ---
+    force_ev_schedules(filtered_sched_file)
+    
+    equipment = {}
+    if BATTERY_SIMULATION == "ON":
+        equipment["Battery"] = BATTERY_PARAMS
+
+    if EV_SIMULATION == "ON":
+        home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
+        home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
+        equipment["EV"] = {
+            "vehicle_type": "BEV",
+            "capacity": home_ev_capacity,
+            "charging_level": "Level 2" if home_charger_kw > 8 else "Level 1",
+            "max_power": home_charger_kw
+        }
+    
     dw = Dwelling(name=f"Base_{os.path.basename(home_path)}",
-                  start_time=Start,
-                  time_res=dt.timedelta(minutes=t_res),
-                  duration=dt.timedelta(days=Duration),
-                  hpxml_file=hpxml_file,
-                  hpxml_schedule_file=filtered_sched_file,
-                  weather_file=weather_file_path,
-                  verbosity=7)
+                  start_time=Start, time_res=dt.timedelta(minutes=t_res), duration=dt.timedelta(days=Duration),
+                  hpxml_file=hpxml_file, hpxml_schedule_file=filtered_sched_file, weather_file=weather_file_path,
+                  verbosity=7, Equipment=equipment)
     return {"path": home_path, "dw": dw}
+
 
 def init_ctrl(home_path, weather_file_path):
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
-    # Uses the pre-shifted schedule generated in Pass 2
+    base_sched_file = os.path.join(home_path, 'filtered_schedules.csv')
     ctrl_sched_file = os.path.join(home_path, 'filtered_schedules_ctrl.csv')
+    
+    # Ensure control schedule exists
+    if not os.path.exists(ctrl_sched_file):
+        if os.path.exists(base_sched_file):
+            shutil.copy(base_sched_file, ctrl_sched_file)
+        else:
+            filter_schedules(home_path)  # Re-generate base if entirely missing
+            shutil.copy(base_sched_file, ctrl_sched_file)
+            
+    # --- GUARANTEE COLUMNS EXIST ---
+    force_ev_schedules(ctrl_sched_file)
     
     equipment = {}
     if WH_SIMULATION == "ON":
         equipment['Water Heating'] = {
-            "Initial Temperature (C)": WH_TinitC, 
-            "hp_only_mode": True,
-            "Max Tank Temperature": 70,
-            "Upper Node": 3,
-            "Lower Node": 10,
-            "Upper Node Weight": 0.75,
+            "Initial Temperature (C)": WH_TinitC, "hp_only_mode": True, "Max Tank Temperature": 70,
+            "Upper Node": 3, "Lower Node": 10, "Upper Node Weight": 0.75,
+        }
+    if BATTERY_SIMULATION == "ON":
+        equipment["Battery"] = BATTERY_PARAMS
+
+    home_charger_kw = None
+    if EV_SIMULATION == "ON":
+        home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
+        home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
+        equipment["EV"] = {
+            "vehicle_type": "BEV",
+            "capacity": home_ev_capacity,
+            "charging_level": "Level 2" if home_charger_kw > 8 else "Level 1",
+            "max_power": home_charger_kw
         }
 
     dw = Dwelling(name=f"Ctrl_{os.path.basename(home_path)}",
-                  start_time=Start,
-                  time_res=dt.timedelta(minutes=t_res),
-                  duration=dt.timedelta(days=Duration),
-                  hpxml_file=hpxml_file,
-                  hpxml_schedule_file=ctrl_sched_file,
-                  weather_file=weather_file_path,
-                  verbosity=7,
-                  Equipment=equipment)
+                  start_time=Start, time_res=dt.timedelta(minutes=t_res), duration=dt.timedelta(days=Duration),
+                  hpxml_file=hpxml_file, hpxml_schedule_file=ctrl_sched_file, weather_file=weather_file_path,
+                  verbosity=7, Equipment=equipment)
     
     return {
         "sim": dw, 
         "path": home_path,
+        "home_charger_kw": home_charger_kw,
         "device_states": {
             "WH": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": WH_RESPONSE_MIN, "max_delay": WH_RESPONSE_MAX},
             "HVAC": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": HVAC_RESPONSE_MIN, "max_delay": HVAC_RESPONSE_MAX},
@@ -690,7 +781,7 @@ if __name__ == "__main__":
     baseline_dwellings = []
     successful_homes = [] # Track which homes actually survived initialization
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
         # Use a dictionary to map the future back to the home path for logging
         futures = {executor.submit(init_base, h, WEATHER_FILE): h for h in homes}
         for f in concurrent.futures.as_completed(futures):
@@ -905,11 +996,20 @@ if __name__ == "__main__":
 
             previous_average_power_kw_dryer = current_step_aggregate / num_homes_dryer
 
-        # Save Shifted Schedules
+        # Pass 2 - Save Shifted Schedules
         valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
         for h in fleet_data_dryer:
             df = h["df_sched"]
-            filtered_cols = [col for col in df.columns if col in valid_schedule_names or col == 'Time']
+            
+            # Preserves EV, vehicle, and plug schedules alongside valid OCHRE keys
+            filtered_cols = [
+                col for col in df.columns 
+                if col in valid_schedule_names 
+                or 'ev' in col.lower() 
+                or 'vehicle' in col.lower()
+                or 'plug' in col.lower()
+                or col == 'Time'
+            ]
             
             df_ctrl = df[filtered_cols].copy()
             if h["dryer_col"]:
@@ -921,7 +1021,7 @@ if __name__ == "__main__":
     # =========================================================================
     print("--- PASS 3: Running Controlled OCHRE Simulation ---")
     fleet_data = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(init_ctrl, h, WEATHER_FILE) for h in homes]
         for f in concurrent.futures.as_completed(futures):
             try:
@@ -1126,7 +1226,8 @@ if __name__ == "__main__":
             # 2. Controlled Update (driven purely by the VPP state now)
             control_cmd = determine_control(
                 sim_time=sim_time,
-                active_commands=active_cmds
+                active_commands=active_cmds,
+                home_charger_kw=home_data.get("home_charger_kw")
             )
             
             # The update() method usually returns a dictionary of the current timestep's metrics

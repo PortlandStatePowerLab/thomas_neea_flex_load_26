@@ -28,7 +28,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_3'
+filename = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_4'
 
 Input_folder = "Combo HPWH HVAC Dryer EV Almost All Input Files"
 
