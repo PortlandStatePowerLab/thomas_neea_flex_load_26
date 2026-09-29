@@ -28,7 +28,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_4'
+filename = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_5'
 
 Input_folder = "Combo HPWH HVAC Dryer EV Almost All Input Files"
 
@@ -550,11 +550,11 @@ def filter_schedules(home_path):
 
     df_sched = pd.read_csv(orig_sched_file)
     
-    # NEW FIX: Inject the EV charging schedule if missing
+    # Inject the EV charging schedule if missing
     if 'electric_vehicle_charging' not in df_sched.columns:
         # A value of 1 means the EV is plugged in and available. 
         # A value of 0 means the EV is disconnected (driving).
-        # This defaults to always plugged in. You can replace 1.0 with a custom profile if needed.
+        # This defaults to always plugged in
         df_sched['electric_vehicle_charging'] = 1.0
 
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
