@@ -14,7 +14,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals(
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'COMBO_Loadshape_WH_HVAC_Dryer_2'
+input_file_root = 'COMBO_Loadshape_WH_HVAC_Dryer_Batt_2'
 
 PLOT_COMMAND_FRACTIONS = "ON"  # Set to "ON" or "OFF"
 

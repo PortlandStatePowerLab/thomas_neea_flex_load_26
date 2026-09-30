@@ -20,8 +20,8 @@ import numpy as np
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_Loadshape_WH_HVAC_Dryer_3'
-Input_folder = "Combo HPWH HVAC Dryer Almost All Input Files"
+filename = 'COMBO_Loadshape_WH_HVAC_Dryer_EV_Batt_1'
+Input_folder = "Combo HPWH HVAC Dryer EV Almost All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -386,7 +386,6 @@ def filter_schedules(home_path):
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
     filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
     dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
-    
     if dropped_columns:
         print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
 
@@ -604,6 +603,10 @@ def init_base(home_path, weather_file_path):
     filtered_sched_file = filter_schedules(home_path)
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
     
+    equipment = {}
+    if BATTERY_SIMULATION == "ON":
+        equipment["Battery"] = BATTERY_PARAMS
+    
     dw = Dwelling(name=f"Base_{os.path.basename(home_path)}",
                   start_time=Start,
                   time_res=dt.timedelta(minutes=t_res),
@@ -611,7 +614,8 @@ def init_base(home_path, weather_file_path):
                   hpxml_file=hpxml_file,
                   hpxml_schedule_file=filtered_sched_file,
                   weather_file=weather_file_path,
-                  verbosity=7)
+                  verbosity=7,
+                  Equipment=equipment)
     return {"path": home_path, "dw": dw}
 
 def init_ctrl(home_path, weather_file_path):
@@ -629,6 +633,9 @@ def init_ctrl(home_path, weather_file_path):
             "Lower Node": 10,
             "Upper Node Weight": 0.75,
         }
+
+    if BATTERY_SIMULATION == "ON":
+        equipment["Battery"] = BATTERY_PARAMS
 
     dw = Dwelling(name=f"Ctrl_{os.path.basename(home_path)}",
                   start_time=Start,
@@ -690,7 +697,7 @@ if __name__ == "__main__":
     baseline_dwellings = []
     successful_homes = [] # Track which homes actually survived initialization
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
         # Use a dictionary to map the future back to the home path for logging
         futures = {executor.submit(init_base, h, WEATHER_FILE): h for h in homes}
         for f in concurrent.futures.as_completed(futures):
@@ -921,7 +928,7 @@ if __name__ == "__main__":
     # =========================================================================
     print("--- PASS 3: Running Controlled OCHRE Simulation ---")
     fleet_data = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(init_ctrl, h, WEATHER_FILE) for h in homes]
         for f in concurrent.futures.as_completed(futures):
             try:
@@ -963,6 +970,7 @@ if __name__ == "__main__":
             if abs(raw_error) <= AVERAGE_DEADBAND_KW:
                 # Inside the deadband: freeze control and reset tracking
                 # pid_output = 0.0
+                error = 0.0
                 integral_error = 0.0
                 previous_error = 0.0
             else:
