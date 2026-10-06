@@ -8,13 +8,15 @@ import os
 import shutil
 import datetime as dt
 import pandas as pd
+import ochre
 from ochre import Dwelling
 from ochre.utils.schedule import ALL_SCHEDULE_NAMES
+import ochre.utils.schedule as ochre_schedule
 import concurrent.futures
 from pathlib import Path
-import ochre
 import random
 import numpy as np
+import traceback
 
 #########################################
 # USER SETTINGS
@@ -378,18 +380,41 @@ HEAT_TinitC = f_to_c(HEAT_TinitF)
 # HELPER FUNCTIONS
 #########################################
 
+# Map 'electric_vehicle_charging' to OCHRE's internal schedule tuple (Category, Name)
+ochre_schedule.ALL_SCHEDULE_NAMES['electric_vehicle_charging'] = ('EV', 'electric_vehicle')
+
 def filter_schedules(home_path):
     orig_sched_file = os.path.join(home_path, CSV_ADDRESS)
     filtered_sched_file = os.path.join(home_path, 'filtered_schedules.csv')
 
     df_sched = pd.read_csv(orig_sched_file)
+    print("base columns")
+    print(df_sched.columns)
+    
+    # Inject the EV charging schedule if missing
+    if 'electric_vehicle_charging' not in df_sched.columns:
+        # A value of 1 means the EV is plugged in and available. 
+        # This defaults to always plugged in.
+        df_sched['electric_vehicle_charging'] = 1.0
+
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
+    
+    # Catch any variation of EV / Vehicle schedules
+    filtered_columns = [
+        col for col in df_sched.columns 
+        if col in valid_schedule_names 
+        or 'ev' in col.lower() 
+        or 'vehicle' in col.lower()
+        or 'plug' in col.lower()
+    ]
+    
     dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
     if dropped_columns:
         print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
 
     df_sched_filtered = df_sched[filtered_columns]
+    print("filtered columns")
+    print(filtered_columns)
     df_sched_filtered.to_csv(filtered_sched_file, index=False)
     return filtered_sched_file
 
@@ -696,6 +721,12 @@ if __name__ == "__main__":
     print(f"--- PASS 1: Running Baseline OCHRE for {len(homes)} homes ---")
     baseline_dwellings = []
     successful_homes = [] # Track which homes actually survived initialization
+
+    try:
+        init_base(homes[0], WEATHER_FILE)
+    except Exception:
+        traceback.print_exc()
+    quit()
     
     with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
         # Use a dictionary to map the future back to the home path for logging
@@ -916,7 +947,16 @@ if __name__ == "__main__":
         valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
         for h in fleet_data_dryer:
             df = h["df_sched"]
-            filtered_cols = [col for col in df.columns if col in valid_schedule_names or col == 'Time']
+            
+            # Retain EV columns so Pass 3 initializes correctly
+            filtered_cols = [
+                col for col in df.columns 
+                if col in valid_schedule_names 
+                or col == 'Time'
+                or 'ev' in col.lower() 
+                or 'vehicle' in col.lower()
+                or 'plug' in col.lower()
+            ]
             
             df_ctrl = df[filtered_cols].copy()
             if h["dryer_col"]:
@@ -1023,7 +1063,7 @@ if __name__ == "__main__":
                 # 2. Cascade into deeper shed commands (Conservative first across ALL devices)
                 shed_transitions = [
                     ("NORMAL", "SHED"),
-                    ("SHED", "CP"),
+                    ("SHED", "CP"),f
                     ("CP", "GE")
                 ]
                 
