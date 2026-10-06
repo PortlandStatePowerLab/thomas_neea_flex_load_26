@@ -684,6 +684,7 @@ def plot_data(baseline_file, controlled_file, title, photo_file, schedule_comman
     df_base = pd.read_csv(baseline_file, index_col=0)
     df_con = pd.read_csv(controlled_file, index_col=0)
 
+    # Calculate the number of homes (total rows minus the 'Average' row)
     num_homes = len(df_base) - 1
 
     df_base = pd.DataFrame(df_base.iloc[[0, -1]].iloc[1, :]).reset_index()
@@ -695,7 +696,7 @@ def plot_data(baseline_file, controlled_file, title, photo_file, schedule_comman
     df_base['Time'] = pd.to_datetime(df_base['Time'], format='%H:%M', errors='coerce')
     df_con['Time'] = pd.to_datetime(df_con['Time'], format='%H:%M', errors='coerce')
 
-    fig, ax1 = plt.subplots(figsize=(6, 6))
+    fig, ax1 = plt.subplots(figsize=(9, 6))
 
     ax1.plot(df_base['Time'], df_base['baseline'], label='Baseline', color='#004C6D', linewidth=2)
     ax1.plot(df_con['Time'], df_con['controlled'], label='Controlled', color='#E26D28', linewidth=2)
@@ -742,11 +743,14 @@ def plot_combined_controlled_loads(folder_path, schedule_commands, photo_file):
     ]
     
     has_data = False
+    num_homes = None
     for label, suffix, color in device_configs:
         ctrl_f = os.path.join(folder_path, filename + "_controlled" + suffix)
         if os.path.exists(ctrl_f):
             df_con = pd.read_csv(ctrl_f, index_col=0)
             if not df_con.empty:
+                if num_homes is None:
+                    num_homes = len(df_con) - 1
                 avg_series = df_con.iloc[-1]
                 df_plot = pd.DataFrame(avg_series).reset_index()
                 df_plot.columns = ['Time', 'Power']
@@ -760,7 +764,10 @@ def plot_combined_controlled_loads(folder_path, schedule_commands, photo_file):
         return
 
     ax1.set_ylabel('Power (kW)')
-    ax1.set_title('Controlled Power Consumption: WH, HVAC & Battery')
+    title_text = 'Controlled Power Consumption: WH, HVAC & Battery'
+    if num_homes is not None:
+        title_text += f' (n={num_homes})'
+    ax1.set_title(title_text)
     ax1.grid(True, alpha=0.3)
 
     # Lock x-axis strictly to 08:00 - 10:00 with 15-minute intervals
