@@ -12,6 +12,10 @@ This code will run simulations in OCHRE for Portland houses, on the appliances:
 Heat Pump Water Heater (HPWH)  
 Electric Resistance Water Heater (ERWH)  
 Air Conditioning (AC)  
+Heating (Heat)
+Dryers 
+Electric Vehicles (EV)
+Batteries
   
 And will compare baseline power usage to controlled power usage using load up and shed commands, for a variety of grid service conditions
 
@@ -24,7 +28,12 @@ Tool: OCHRE
 
 HPWH: code for simulating heat pump water heaters  
 ERWH: code for simulating electric resistance water heaters  
-AC: code for simulating air conditioning  
+AC: code for simulating air conditioning
+HEAT: code for heating
+Dryer: code for dryers
+EV: code for EVs
+Battery: code for batteries
+Combo: code for the simultaneous combination simulations for all devices
 
     
 # Getting Started
@@ -57,4 +66,5 @@ A3 code will adjust XML files if you need to change appliance properties
 B code will simulate, you only need to run one of these, the numbers are just to keep them in order  
 (C: post simulation)  
 C1 code will parse the raw data and reorganize it to home rows and time columns for a specific data series  
-C2 code will average the data for each time step and plot  
+C2 code will average the data for each time step and plot for energy scheduling, includes shaded area for command durations
+C3 code will average data and plot for load shaping, includes setpoint power and how many units received each command on the plots
