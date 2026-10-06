@@ -2,10 +2,7 @@
 """
 1-Minute Resolution Energy Scheduling Simulation, Data Parsing, and Plotting
 Starts at Midnight (00:00), Initialized 00:00-08:00, Evaluated 08:00-10:00
-Load Up Command sent at 08:30. Only WH, HVAC, and Batteries
-
-Created by Thomas Metzler 10/6/2027
-IEEE PES GM 2027 
+Load Up Command sent at 08:30
 """
 
 import os
@@ -28,6 +25,10 @@ import matplotlib.dates as mdates
 #########################################
 # USER SETTINGS & PATH SETUP
 #########################################
+
+# --- TOGGLE SWITCH FOR SIMULATION ---
+# Set to False to skip OCHRE simulation and quickly adjust/re-generate plots
+RUN_SIMULATION = False  
 
 filename = 'IEEE_PES_GM_27_1min_1'
 Input_folder = "IEEE PES GM 2027 All Input Files"
@@ -607,6 +608,8 @@ def aggregate_results(homes, work_dir):
 #########################################
 
 def process_c1_data(input_file, output_file, wanted_col):
+    if not os.path.exists(input_file):
+        return
     df = pd.read_csv(input_file).dropna(axis=0)
     df['time'] = pd.to_datetime(df['Time'], errors='coerce')
     df['hr_min'] = df['time'].dt.strftime('%H:%M')
@@ -648,10 +651,11 @@ def run_c1_parsing():
 #########################################
 
 def save_avg(file_path):
-    df = pd.read_csv(file_path)
-    averages = df.mean(numeric_only=True)
-    df.loc['Average'] = averages
-    df.to_csv(file_path, index=False)
+    if os.path.exists(file_path):
+        df = pd.read_csv(file_path)
+        averages = df.mean(numeric_only=True)
+        df.loc['Average'] = averages
+        df.to_csv(file_path, index=False)
 
 def get_active_commands():
     commands = []
@@ -674,6 +678,9 @@ def get_active_commands():
     return commands
 
 def plot_data(baseline_file, controlled_file, title, photo_file, schedule_commands):
+    if not (os.path.exists(baseline_file) and os.path.exists(controlled_file)):
+        return
+
     df_base = pd.read_csv(baseline_file, index_col=0)
     df_con = pd.read_csv(controlled_file, index_col=0)
 
@@ -688,13 +695,21 @@ def plot_data(baseline_file, controlled_file, title, photo_file, schedule_comman
     df_base['Time'] = pd.to_datetime(df_base['Time'], format='%H:%M', errors='coerce')
     df_con['Time'] = pd.to_datetime(df_con['Time'], format='%H:%M', errors='coerce')
 
-    fig, ax1 = plt.subplots(figsize=(10, 5))
+    fig, ax1 = plt.subplots(figsize=(6, 6))
 
     ax1.plot(df_base['Time'], df_base['baseline'], label='Baseline', color='#004C6D', linewidth=2)
     ax1.plot(df_con['Time'], df_con['controlled'], label='Controlled', color='#E26D28', linewidth=2)
     ax1.set_ylabel('Power (kW)')
     ax1.set_title(f"{title} (n={num_homes})")
     ax1.grid(True, alpha=0.3)
+
+    # Lock x-axis strictly to 08:00 - 10:00 with 15-minute intervals
+    t_start = pd.to_datetime('08:00', format='%H:%M')
+    t_end = pd.to_datetime('09:00', format='%H:%M')
+    ax1.set_xlim(t_start, t_end)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax1.xaxis.set_major_locator(mdates.MinuteLocator(interval=15))
+    plt.setp(ax1.get_xticklabels(), rotation=45)
 
     ax2 = ax1.twinx()
     ax2.set_ylabel('Fraction of units given command')
@@ -708,10 +723,65 @@ def plot_data(baseline_file, controlled_file, title, photo_file, schedule_comman
         ax2.plot(cmd['times'], y_vals, color=cmd['color'], linewidth=1)
         ax2.fill_between(cmd['times'], y_vals, color=cmd['color'], alpha=0.1, label=label)
 
-    # X-axis formatted for 08:00 - 10:00 AM with 15-minute tick intervals
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False)
+
+    plt.tight_layout()
+    plt.savefig(photo_file, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_combined_controlled_loads(folder_path, schedule_commands, photo_file):
+    """Plots controlled WH, HVAC (AC/HEAT), and Battery power consumption on the same axes."""
+    fig, ax1 = plt.subplots(figsize=(9, 6))
+    
+    device_configs = [
+        ('Water Heating', '_WH_power.csv', "#A31401"),
+        ('HVAC Cooling', '_AC_power.csv', "#00ACAC"),
+        ('Battery', '_BATT_power.csv', '#EDAE49')
+    ]
+    
+    has_data = False
+    for label, suffix, color in device_configs:
+        ctrl_f = os.path.join(folder_path, filename + "_controlled" + suffix)
+        if os.path.exists(ctrl_f):
+            df_con = pd.read_csv(ctrl_f, index_col=0)
+            if not df_con.empty:
+                avg_series = df_con.iloc[-1]
+                df_plot = pd.DataFrame(avg_series).reset_index()
+                df_plot.columns = ['Time', 'Power']
+                df_plot['Time'] = pd.to_datetime(df_plot['Time'], format='%H:%M', errors='coerce')
+                
+                ax1.plot(df_plot['Time'], df_plot['Power'], label=f'{label} (Controlled)', color=color, linewidth=2)
+                has_data = True
+
+    if not has_data:
+        plt.close()
+        return
+
+    ax1.set_ylabel('Power (kW)')
+    ax1.set_title('Controlled Power Consumption: WH, HVAC & Battery')
+    ax1.grid(True, alpha=0.3)
+
+    # Lock x-axis strictly to 08:00 - 10:00 with 15-minute intervals
+    t_start = pd.to_datetime('08:00', format='%H:%M')
+    t_end = pd.to_datetime('09:00', format='%H:%M')
+    ax1.set_xlim(t_start, t_end)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
     ax1.xaxis.set_major_locator(mdates.MinuteLocator(interval=15))
     plt.setp(ax1.get_xticklabels(), rotation=45)
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Fraction of units given command')
+    ax2.set_ylim(0, 1)
+
+    added_labels = set()
+    for cmd in schedule_commands:
+        y_vals = [0, 1, 1, 0]
+        label = cmd['type'] if cmd['type'] not in added_labels else ""
+        if label: added_labels.add(label)
+        ax2.plot(cmd['times'], y_vals, color=cmd['color'], linewidth=1)
+        ax2.fill_between(cmd['times'], y_vals, color=cmd['color'], alpha=0.1, label=label)
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
@@ -749,6 +819,10 @@ def run_c2_plotting():
         save_avg(ctrl_f)
         plot_data(base_f, ctrl_f, title, img_f, active_commands)
 
+    # Generate multi-device controlled plot for WH, HVAC, and Battery
+    comb_img_f = os.path.join(folder_path, filename + "_controlled_WH_HVAC_Battery_plot.png")
+    plot_combined_controlled_loads(folder_path, active_commands, comb_img_f)
+
 #########################################
 # MAIN EXECUTION FLOW
 #########################################
@@ -768,30 +842,36 @@ if __name__ == "__main__":
         shutil.copy(DEFAULT_WEATHER, WEATHER_FILE)
 
     homes = find_all_homes(INPUT_DIR)
-    print(f"Found {len(homes)} homes. Running 1-minute simulation from 00:00 to 10:00...")
 
-    # Step 1: Parallel Simulation
-    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
-        futures = []
-        for home in homes:
-            home_basename = os.path.basename(home)
-            home_num_str = re.sub(r'\D', '', home_basename)
-            home_num = int(home_num_str) if home_num_str else 0
-            
-            home_sched_td = create_home_schedule(my_schedule1, bins=bins, home_idx=home_num)
-            futures.append(executor.submit(simulate_home, home, WEATHER_FILE, home_sched_td))
+    # Check ON/OFF switch for simulation
+    if RUN_SIMULATION:
+        print(f"Found {len(homes)} homes. Running 1-minute simulation from 00:00 to 10:00...")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
+            futures = []
+            for home in homes:
+                home_basename = os.path.basename(home)
+                home_num_str = re.sub(r'\D', '', home_basename)
+                home_num = int(home_num_str) if home_num_str else 0
+                
+                home_sched_td = create_home_schedule(my_schedule1, bins=bins, home_idx=home_num)
+                futures.append(executor.submit(simulate_home, home, WEATHER_FILE, home_sched_td))
 
-        for f in concurrent.futures.as_completed(futures):
-            try:
-                f.result()
-            except Exception as e:
-                print("Simulation error:", e)
+            for f in concurrent.futures.as_completed(futures):
+                try:
+                    f.result()
+                except Exception as e:
+                    print("Simulation error:", e)
 
-    print("Simulations complete. Aggregating raw datasets...")
-    aggregate_results(homes, WORKING_DIR)
-
-    print("Parsing data into 1-minute pivoted CSVs (C1)...")
-    run_c1_parsing()
+        print("Simulations complete. Aggregating raw datasets...")
+        aggregate_results(homes, WORKING_DIR)
+        print("Parsing data into 1-minute pivoted CSVs (C1)...")
+        run_c1_parsing()
+    else:
+        print("[INFO] RUN_SIMULATION is False. Skipping simulation step.")
+        # Re-parse existing raw CSVs into pivoted format if present
+        if os.path.exists(os.path.join(WORKING_DIR, filename + "_controlled.csv")):
+            print("Re-parsing existing dataset into pivoted CSVs (C1)...")
+            run_c1_parsing()
 
     print("Generating plots for 08:00 AM to 10:00 AM (C2)...")
     run_c2_plotting()
