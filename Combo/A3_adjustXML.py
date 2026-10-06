@@ -21,7 +21,7 @@ FL_DIR = SCRIPT_DIR.parent
 WORKING_DIR = FL_DIR.parent
 
 INPUT_DIR = WORKING_DIR / "All Portland Input Files"
-OUTPUT_DIR = WORKING_DIR / "Combo HPWH HVAC Dryer EV Almost All Input Files"
+OUTPUT_DIR = WORKING_DIR / "IEEE PES GM 2027 All Input Files"
 
 METADATA_DIR = WORKING_DIR / "Metadata" / "OR_upgrade0.csv"
 # Load metadata once globally
@@ -46,7 +46,7 @@ DEVICES = {
 HPWH_MODEL_CONFIG = {
     "HPWH_model": [
         # AOSmith HPTU-50N
-        {"TankVolume": 46.0, "HeatingCapacity": 1391, "UniformEnergyFactor": 3.45, "BackupHeatingCapacity": 15345.0}
+        {"TankVolume": 80.0, "HeatingCapacity": 1706, "UniformEnergyFactor": 3.98, "BackupHeatingCapacity": 15345.0}
     ]
 }
 
@@ -75,7 +75,7 @@ DRYER_MODEL_CONFIG = {
 
 EV_MODEL_CONFIG = {
     "EV_model": [
-        {"ChargingLevel":"Level1", "ChargingPower":"9500"}
+        {"ChargingLevel":"Level1", "ChargingPower":"11500"}
     ]
 }
 
