@@ -28,9 +28,8 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'Combo_WH_HVAC_Dryer_EV_Battery_TEST_5'
-
-Input_folder = "Combo HPWH HVAC Dryer EV Almost All Input Files"
+filename = 'IEEE_PES_GM_27_Dryer_Impulse'
+Input_folder = "IEEE PES GM 2027 All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -123,15 +122,15 @@ HVAC_RESPONSE_MIN = 30
 HVAC_RESPONSE_MAX = 90
 
 # Dryer duty cycle parameters, dryers can't load up only curtail power
-dryer_duty_cycle_shed = 0.5
-dryer_duty_cycle_cp = 0.25
+dryer_duty_cycle_shed = 0.25
+dryer_duty_cycle_cp = 0.1
 dryer_duty_cycle_ge = 0
 
 # EV Control Settings
 DEFAULT_CHARGER_POWER_KW = 11.5 # Fallback 1.6 for Level 1, 5.6 for Level 2 (Dynamically checked per home below)
 DEFAULT_CAPACITY_KWH = 60.0 # Fallback capacity if missing from HPXML
-EV_SHED_PCT = 0.5
-EV_CP_PCT = 0.25
+EV_SHED_PCT = 0.25
+EV_CP_PCT = 0.1
 EV_GE_PCT = 0
 
 # Battery Control Settings

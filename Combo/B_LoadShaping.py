@@ -22,8 +22,8 @@ import traceback
 # USER SETTINGS
 #########################################
 
-filename = 'COMBO_Loadshape_WH_HVAC_Dryer_EV_Batt_1'
-Input_folder = "Combo HPWH HVAC Dryer EV Almost All Input Files"
+filename = 'IEEE_PES_GM_27_AllDevices_1'
+Input_folder = "IEEE PES GM 2027 All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
