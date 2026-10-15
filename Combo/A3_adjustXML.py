@@ -21,7 +21,7 @@ FL_DIR = SCRIPT_DIR.parent
 WORKING_DIR = FL_DIR.parent
 
 INPUT_DIR = WORKING_DIR / "All Portland Input Files"
-OUTPUT_DIR = WORKING_DIR / "IEEE PES GM 2027 All Input Files"
+OUTPUT_DIR = WORKING_DIR / "IEEE PES GM 2027 All Input Files v2"
 
 METADATA_DIR = WORKING_DIR / "Metadata" / "OR_upgrade0.csv"
 # Load metadata once globally
