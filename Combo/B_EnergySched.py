@@ -23,12 +23,12 @@ from pathlib import Path
 import ochre
 import numpy as np
 import random
-
+  
 #########################################
 # USER SETTINGS
 #########################################
 
-filename = 'IEEE_PES_GM_27_Dryer_Impulse'
+filename = 'IEEE_PES_GM_27_AllDevices_12'  
 Input_folder = "IEEE PES GM 2027 All Input Files"
 
 # Original OCHRE defaults folder
@@ -135,13 +135,13 @@ EV_GE_PCT = 0
 
 # Battery Control Settings
 BATTERY_PARAMS = {
-    "capacity_kwh": 10,         # Usable energy capacity in kWh
-    "capacity": 1.0,            # Max continuous power rating in kW
-    "efficiency": 0.98,         # Discharging efficiency
-    "efficiency_charge": 0.98,  # Charging efficiency
-    "soc_init": 0.5,            # Start at 50% SOC
-    "soc_min": 0.0,             # Minimum allowable SOC
-    "soc_max": 1.0,             # Maximum allowable SOC
+    "capacity_kwh": 10,
+    "capacity": 1.0,
+    "efficiency": 0.98,
+    "efficiency_charge": 0.98,
+    "soc_init": 0.5,
+    "soc_min": 0.0,
+    "soc_max": 1.0,
 }
 
 # Control commands in kW (+ is charging/Load Up, - is discharging/Shed)
@@ -215,7 +215,7 @@ def shift_time(time_str, minutes):
     new_delta_t = delta_t + dt.timedelta(minutes=minutes)
     return new_delta_t.strftime('%H:%M')
 
-bins = 17
+bins = 33
 
 #########################################
 # STAGGER SCHEDULES FOR RAMPING
@@ -405,61 +405,50 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_k
     wh_delay = wh_delay if wh_delay is not None else pd.Timedelta(seconds=0)
     hvac_delay = hvac_delay if hvac_delay is not None else pd.Timedelta(seconds=0)
 
-    # Initialize control signal dictionary
-    ctrl_signal = {}
-
-    # Add Water Heating if simulated
-    if WH_SIMULATION == "ON":
-        ctrl_signal['Water Heating'] = {
+    # Initialize control signal dictionary with baseline settings for ALL devices
+    ctrl_signal = {
+        'Water Heating': {
             'Setpoint': WH_TbaselineC,
             'Deadband': WH_TdeadbandC,
             'Load Fraction': 1,
+        },
+        'Clothes Dryer': {
+            'Load Fraction': 1
+        },
+        'Battery': {
+            'P Setpoint': P_Battery_IDLE_KW
         }
-
+    }
+    
     # Add HVAC if simulated, checking the month to separate Heating vs Cooling
     # Let's assume May (5) through Sept (9) is Cooling Season in Portland
     is_cooling_season = sim_time.month in [5, 6, 7, 8, 9]
 
-    if HVAC_SIMULATION == "ON":
-        if is_cooling_season:
-            # Normal cooling control
-            ctrl_signal['HVAC Cooling'] = {
-                'Setpoint': AC_TbaselineC,
-                'Deadband': AC_TdeadbandC,
-                'Load Fraction': 1,
-            }
-            # Suppress heating by pushing setpoint extremely low
-            ctrl_signal['HVAC Heating'] = {
-                'Setpoint': HEAT_Tcontrol_GEC,
-                'Deadband': HEAT_TdeadbandC,
-                'Load Fraction': 1,
-            }
-        else:
-            # Normal heating control
-            ctrl_signal['HVAC Heating'] = {
-                'Setpoint': HEAT_TbaselineC,
-                'Deadband': HEAT_TdeadbandC,
-                'Load Fraction': 1,
-            }
-            # Suppress cooling by pushing setpoint extremely high
-            ctrl_signal['HVAC Cooling'] = {
-                'Setpoint': AC_Tcontrol_GEC,
-                'Deadband': AC_TdeadbandC,
-                'Load Fraction': 1,
-            }
-
-    # Add dryers if simulated
-    if DRYER_SIMULATION == "ON":
-        ctrl_signal['Clothes Dryer'] = {
-            'Load Fraction': 1  # 1 = Normal schedule operation
+    if is_cooling_season:
+        ctrl_signal['HVAC Cooling'] = {
+            'Setpoint': AC_TbaselineC,
+            'Deadband': AC_TdeadbandC,
+            'Load Fraction': 1,
+        }
+        ctrl_signal['HVAC Heating'] = {
+            'Setpoint': HEAT_Tcontrol_GEC,
+            'Deadband': HEAT_TdeadbandC,
+            'Load Fraction': 1,
+        }
+    else:
+        ctrl_signal['HVAC Heating'] = {
+            'Setpoint': HEAT_TbaselineC,
+            'Deadband': HEAT_TdeadbandC,
+            'Load Fraction': 1,
+        }
+        ctrl_signal['HVAC Cooling'] = {
+            'Setpoint': AC_Tcontrol_GEC,
+            'Deadband': AC_TdeadbandC,
+            'Load Fraction': 1,
         }
 
-    # Add batteries if simulated
-    if BATTERY_SIMULATION == "ON":
-        ctrl_signal['Battery'] = {
-            'P Setpoint': P_Battery_IDLE_KW
-        }
-
+    if home_charger_kw is not None:
+        ctrl_signal['EV'] = {'Max Power': home_charger_kw}
 
     midnight = pd.to_datetime(sim_time.date())
 
@@ -494,7 +483,7 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_k
     hvac_mode = get_active_mode_for_delay(hvac_delay)
     base_mode = get_active_mode_for_delay(pd.Timedelta(seconds=0)) # For EV and Battery
 
-    # Apply WH setpoints
+    # Override with DR event setpoints ONLY if device simulation is ON
     if WH_SIMULATION == "ON" and wh_mode:
         _, wh_sp, wh_db, _, _, _, _ = wh_mode
         ctrl_signal['Water Heating'].update({'Setpoint': wh_sp, 'Deadband': wh_db})
@@ -608,8 +597,8 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
 
     # Find the dryer column
     dryer_cols = [c for c in df_sched.columns if 'dryer' in c.lower()]
-    if not dryer_cols:
-        df_sched.to_csv(ctrl_sched_file, index=False) # No dryer to shift
+    if not dryer_cols or DRYER_SIMULATION == "OFF":
+        df_sched.to_csv(ctrl_sched_file, index=False)
         return base_sched_file, ctrl_sched_file
     
     dryer_col = dryer_cols[0]
@@ -695,37 +684,29 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     results_dir = os.path.join(home_path, "Results")
     os.makedirs(results_dir, exist_ok=True)
 
-    equipment = {}
+    # Initialize equipment definitions for ALL devices so baseline dwelling setup is consistent
+    equipment = {
+        "Water Heating": {
+            "Initial Temperature (C)": WH_TinitC, 
+            "hp_only_mode": True,
+            "Max Tank Temperature": 70,
+            "Upper Node": 3,
+            "Lower Node": 10,
+            "Upper Node Weight": 0.75,
+        },
+        "Battery": BATTERY_PARAMS
+    }
 
-    if WH_SIMULATION == "ON":
-        equipment["Water Heating"] = {
-                "Initial Temperature (C)": WH_TinitC, 
-                "hp_only_mode": True,
-                "Max Tank Temperature": 70,
-                "Upper Node": 3,
-                "Lower Node": 10,
-                "Upper Node Weight": 0.75,
-        }
-
-    if BATTERY_SIMULATION == "ON":
-        equipment["Battery"] = BATTERY_PARAMS
-
-    home_charger_kw = None
-    if EV_SIMULATION == "ON":
-        home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
-        home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
+    home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
+    home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
+    home_charger = "Level 2" if home_charger_kw > 8 else "Level 1"
         
-        if home_charger_kw > 8:
-            home_charger = "Level 2"
-        else:
-            home_charger = "Level 1"
-            
-        equipment["EV"] = {
-            "vehicle_type": "BEV",
-            "capacity": home_ev_capacity,
-            "charging_level": home_charger,
-            "max_power": home_charger_kw
-        }
+    equipment["EV"] = {
+        "vehicle_type": "BEV",
+        "capacity": home_ev_capacity,
+        "charging_level": home_charger,
+        "max_power": home_charger_kw
+    }
 
     # Extract digits from the home folder name to use as a seed
     home_name = os.path.basename(home_path)
@@ -751,16 +732,21 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     base_dwelling = Dwelling(name="Home Baseline", hpxml_schedule_file=base_sched_file, **copy.deepcopy(dwelling_args_local))
     
     for t_base in base_dwelling.sim_times:
-        # Build baseline control dynamically so we don't crash if things are OFF
-        base_ctrl = {}
-        if WH_SIMULATION == "ON":
-            base_ctrl["Water Heating"] = {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1}
-        
-        if HVAC_SIMULATION == "ON":
+         # Build baseline control dynamically so we don't crash if things are OFF
+        is_cooling_season = t_base.month in [5, 6, 7, 8, 9]
+        base_ctrl = {
+            "Water Heating": {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1},
+            "Clothes Dryer": {"Load Fraction": 1},
+            "Battery": {"P Setpoint": P_Battery_IDLE_KW},
+        }
+        if is_cooling_season:
             base_ctrl["HVAC Cooling"] = {"Setpoint": AC_TbaselineC, "Deadband": AC_TdeadbandC, "Load Fraction": 1}
+            base_ctrl["HVAC Heating"] = {"Setpoint": HEAT_Tcontrol_GEC, "Deadband": HEAT_TdeadbandC, "Load Fraction": 1}
+        else:
             base_ctrl["HVAC Heating"] = {"Setpoint": HEAT_TbaselineC, "Deadband": HEAT_TdeadbandC, "Load Fraction": 1}
-        
-        if EV_SIMULATION == "ON" and home_charger_kw is not None:
+            base_ctrl["HVAC Cooling"] = {"Setpoint": AC_Tcontrol_GEC, "Deadband": AC_TdeadbandC, "Load Fraction": 1}
+
+        if home_charger_kw is not None:
             base_ctrl["EV"] = {"Max Power": home_charger_kw}
                 
         base_dwelling.update(control_signal=base_ctrl)
@@ -779,10 +765,7 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     np.random.seed(home_seed)
     sim_dwelling = Dwelling(name="Home Controlled", hpxml_schedule_file=ctrl_sched_file, **copy.deepcopy(dwelling_args_local))
     
-    # Get HPWH unit only if WH_SIMULATION is ON
-    hpwh_unit = None
-    if WH_SIMULATION == "ON":
-        hpwh_unit = sim_dwelling.get_equipment_by_end_use('Water Heating')
+    hpwh_unit = sim_dwelling.get_equipment_by_end_use('Water Heating')
         
     for sim_time in sim_dwelling.sim_times:
         # Provide a default temp if WH is off so determine_control still works
@@ -847,7 +830,7 @@ def find_all_homes(base_dir):
             if os.path.isfile(os.path.join(home_path, XML_ADDRESS)) and \
                os.path.isfile(os.path.join(home_path, CSV_ADDRESS)):
                 homes.append(home_path)
-    print(f"-++++++++++++ {homes}\n {base_dir}",)
+    print(f"-++++++++++++ {homes}\n {base_dir}")
     return homes
 
 #########################################
@@ -932,7 +915,7 @@ if __name__ == "__main__":
 
         for f in concurrent.futures.as_completed(futures):
             try:
-                f.result()  # forces execution and raises exceptions if any
+                f.result()
             except Exception as e:
                 failcount += 1
                 print("Simulation failed:", e, failcount)
