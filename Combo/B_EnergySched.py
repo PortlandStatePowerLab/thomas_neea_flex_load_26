@@ -28,7 +28,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'IEEE_PES_GM_27_AllDevices_12'  
+filename = 'IEEE_PES_GM_27_AllDevices_13'  
 Input_folder = "IEEE PES GM 2027 All Input Files"
 
 # Original OCHRE defaults folder
@@ -469,12 +469,12 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_k
             
             # Check Morning with delay offset
             m_start, m_end = home_schedule_td[f'M_{mode_name}']
-            if (midnight + m_start + delay_td) <= sim_time < (midnight + m_end + delay_td):
+            if m_start != m_end and (midnight + m_start + delay_td) <= sim_time < (midnight + m_end + delay_td):
                 return mode_data
 
             # Check Evening with delay offset
             e_start, e_end = home_schedule_td[f'E_{mode_name}']
-            if (midnight + e_start + delay_td) <= sim_time < (midnight + e_end + delay_td):
+            if e_start != e_end and (midnight + e_start + delay_td) <= sim_time < (midnight + e_end + delay_td):
                 return mode_data
         return None
 
