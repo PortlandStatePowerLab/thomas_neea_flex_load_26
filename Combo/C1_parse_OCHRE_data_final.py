@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'IEEE_PES_GM_27_AllDevices_15'  
+input_file_root = 'IEEE_PES_GM_27_AllDevices_23'  
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV

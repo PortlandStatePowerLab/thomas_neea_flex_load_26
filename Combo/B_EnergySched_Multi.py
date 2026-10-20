@@ -28,8 +28,8 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'IEEE_PES_GM_27_AllDevices_15'  
-Input_folder = "IEEE PES GM 2027 All Input Files v2"
+filename = 'IEEE_PES_GM_27_AllDevices_23'
+Input_folder = "IEEE PES GM 2027 All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -180,32 +180,32 @@ my_schedule1 = {}
 
 try:
     df_sched = pd.read_csv(schedule_file)
-
+    
     for index, row in df_sched.iterrows():
         command = str(row['Command']).strip()
         on_off = str(row['OnOff']).strip().upper()
-
+        
         if on_off == 'ON':
             # -- Parse RAMP IN --
             start_rin_str = str(row['START RAMP IN']).strip()
             dur_rin = float(row['DURATION RAMP IN'])
-
+            
             t_start_rin = dt.datetime.strptime(start_rin_str, '%H:%M')
             t_end_rin = t_start_rin + dt.timedelta(hours=dur_rin)
-
+            
             my_schedule1[f"{command}_rampin_start"] = t_start_rin.strftime('%H:%M')
             my_schedule1[f"{command}_rampin_end"] = t_end_rin.strftime('%H:%M')
-
+             
             # -- Parse RAMP OUT --
             start_rout_str = str(row['START RAMP OUT']).strip()
             dur_rout = float(row['DURATION RAMP OUT'])
-
+            
             t_start_rout = dt.datetime.strptime(start_rout_str, '%H:%M')
             t_end_rout = t_start_rout + dt.timedelta(hours=dur_rout)
-
+            
             my_schedule1[f"{command}_rampout_start"] = t_start_rout.strftime('%H:%M')
             my_schedule1[f"{command}_rampout_end"] = t_end_rout.strftime('%H:%M')
-
+            
 except FileNotFoundError:
     print(f"[ERROR] {schedule_file} not found. The simulation may fail.")
 
@@ -227,7 +227,7 @@ def create_home_schedule(base_sched, bins, home_idx):
     distributed across the defined ramp-in and ramp-out periods.
     """
     bin_idx = home_idx % bins
-
+    
     # Calculate the fraction of the ramp duration this bin represents.
     # We use (bins - 1) so that the first bin is at the exact start (0.0), 
     # and the last bin is at the exact end (1.0) of the ramp period.
@@ -238,7 +238,7 @@ def create_home_schedule(base_sched, bins, home_idx):
         return pd.Timedelta(hours=t.hour, minutes=t.minute)
 
     home_schedule = {}
-
+    
     # Process all combinations of Time-of-Day (M/E) and Modes
     times_of_day = ['M', 'E']
     modes = ['ALU', 'LU', 'S', 'CP', 'GE']
@@ -246,26 +246,26 @@ def create_home_schedule(base_sched, bins, home_idx):
     for tod in times_of_day:
         for mode in modes:
             prefix = f"{tod}_{mode}" # e.g. "M_ALU"
-
+            
             # --- RAMP IN (Start of command) ---
             rin_start_str = base_sched.get(f"{prefix}_rampin_start", "00:00")
             rin_end_str = base_sched.get(f"{prefix}_rampin_end", rin_start_str)
-
+            
             rin_start_td = parse_time(rin_start_str)
             rin_end_td = parse_time(rin_end_str)
             rin_duration = rin_end_td - rin_start_td
-
+            
             # Interpolate ramp-in time based on bin position
             home_start_td = rin_start_td + (rin_duration * ramp_fraction)
 
             # --- RAMP OUT (End of command) ---
             rout_start_str = base_sched.get(f"{prefix}_rampout_start", "00:00")
             rout_end_str = base_sched.get(f"{prefix}_rampout_end", rout_start_str)
-
+            
             rout_start_td = parse_time(rout_start_str)
             rout_end_td = parse_time(rout_end_str)
             rout_duration = rout_end_td - rout_start_td
-
+            
             # Interpolate ramp-out time based on bin position
             home_end_td = rout_start_td + (rout_duration * ramp_fraction)
 
@@ -348,21 +348,21 @@ def get_ev_charger_power(hpxml_path, default_kw=20):
     try:
         tree = ET.parse(hpxml_path)
         root = tree.getroot()
-
+        
         # Remove namespaces for easier tag matching
         for elem in root.iter():
             if '}' in elem.tag:
                 elem.tag = elem.tag.split('}', 1)[1]
-
+                
         for charger in root.findall('.//ElectricVehicleCharger'):
             charge_elem = charger.find('ChargingPower')
-
+            
             if charge_elem is not None and charge_elem.text:
                 return float(charge_elem.text) / 1000
-
+                
     except Exception as e:
         print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_kw}. Error: {e}")
-
+    
     return default_kw
 
 def get_ev_capacity_or_range(hpxml_path, default_capacity_kwh=60.0):
@@ -373,26 +373,26 @@ def get_ev_capacity_or_range(hpxml_path, default_capacity_kwh=60.0):
     try:
         tree = ET.parse(hpxml_path)
         root = tree.getroot()
-
+        
         # Remove namespaces for easier tag matching
         for elem in root.iter():
             if '}' in elem.tag:
                 elem.tag = elem.tag.split('}', 1)[1]
-
+                
         # Search for Battery element under ElectricVehicle/Vehicle
         for battery in root.findall('.//Battery'):
             # Prefer UsableCapacity, fallback to NominalCapacity
             usable = battery.find('UsableCapacity/Value')
             if usable is not None and usable.text:
                 return float(usable.text)
-
+                
             nominal = battery.find('NominalCapacity/Value')
             if nominal is not None and nominal.text:
                 return float(nominal.text)
-
+                
     except Exception as e:
         print(f"[WARNING] Failed to parse EV capacity from {hpxml_path}. Using default {default_capacity_kwh} kWh. Error: {e}")
-
+        
     return default_capacity_kwh
 
 #########################################
@@ -477,7 +477,7 @@ def determine_control(sim_time, current_temp_c, home_schedule_td, home_charger_k
     def get_active_mode_for_delay(delay_td):
         for mode_data in modes:
             mode_name = mode_data[0]
-
+            
             # Check Morning with delay offset
             m_start, m_end = home_schedule_td[f'M_{mode_name}']
             if (midnight + m_start + delay_td) <= sim_time < (midnight + m_end + delay_td):
@@ -548,7 +548,7 @@ def filter_schedules(home_path):
     filtered_sched_file = os.path.join(home_path, 'filtered_schedules.csv')
 
     df_sched = pd.read_csv(orig_sched_file)
-
+    
     # Inject the EV charging schedule if missing
     if 'electric_vehicle_charging' not in df_sched.columns:
         # A value of 1 means the EV is plugged in and available. 
@@ -557,7 +557,7 @@ def filter_schedules(home_path):
         df_sched['electric_vehicle_charging'] = 1.0
 
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-
+    
     # Catch any variation of EV / Vehicle schedules
     filtered_columns = [
         col for col in df_sched.columns 
@@ -566,7 +566,7 @@ def filter_schedules(home_path):
         or 'vehicle' in col.lower()
         or 'plug' in col.lower()
     ]
-
+    
     dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
     if dropped_columns:
         print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
@@ -596,7 +596,7 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
         or 'vehicle' in col.lower()
         or 'plug' in col.lower()
     ]
-
+    
     if not filtered_columns:
         print(f"[WARNING] No columns matched ALL_SCHEDULE_NAMES for {home_path}. Retaining all original columns.")
         df_sched = df_sched.copy()
@@ -611,19 +611,19 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     if not dryer_cols:
         df_sched.to_csv(ctrl_sched_file, index=False) # No dryer to shift
         return base_sched_file, ctrl_sched_file
-
+    
     dryer_col = dryer_cols[0]
 
     # Create dummy datetime index for time-of-day masking
     df_sched['Datetime'] = pd.date_range(start="2018-01-01 00:00:00", periods=len(df_sched), freq=f'{t_res_minutes}min')
     df_sched.set_index('Datetime', inplace=True)
-
+    
     # Track the active duty cycle for each timestep (default to 1.0 - no curtailment)
     duty_cycles = np.ones(len(df_sched), dtype=float)
-
+    
     # Get the time of day as a timedelta from midnight for easy comparison
     time_of_day = df_sched.index - df_sched.index.normalize()
-
+    
     # Map modes to their respective duty cycle variables defined in your script
     curtailment_modes = {
         'S': dryer_duty_cycle_shed,
@@ -648,19 +648,19 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
     # Accumulate and distribute load to conserve total schedule sum
     orig_vals = df_sched[dryer_col].values
     new_vals = np.zeros_like(orig_vals, dtype=float)
-
+    
     # Find the maximum normal operating coefficient (usually 1.0)
     max_cap = orig_vals.max() if orig_vals.max() > 0 else 1.0
     work_queue = 0.0
-
+    
     for i in range(len(orig_vals)):
         # Add the current timestep's scheduled work to the queue
         work_queue += orig_vals[i]
-
+        
         # Clean up floating point precision remnants
         if work_queue < 1e-6:
             work_queue = 0.0
-
+            
         if work_queue > 0:
             # Detect any boundary (entering or exiting a shed)
             # Force a 0 for exactly one timestep to split the event
@@ -670,17 +670,17 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
                 # Throttle using the specific duty cycle for this timestep
                 allowed_rate = max_cap * duty_cycles[i]
                 run_amt = min(work_queue, allowed_rate)
-
+                
             new_vals[i] = run_amt
             work_queue -= run_amt
 
     # Assign new values back to the dataframe
     df_sched[dryer_col] = new_vals
     df_sched.reset_index(drop=True, inplace=True)
-
+    
     # Save controlled schedule
     df_sched.to_csv(ctrl_sched_file, index=False)
-
+    
     return base_sched_file, ctrl_sched_file
 
 #########################################
@@ -690,7 +690,7 @@ def prepare_schedules(home_path, sched_cfg, t_res_minutes=15):
 def simulate_home(home_path, weather_file_path, schedule_cfg):
     # 1. Use prepare_schedules instead of filter_schedules to get the separated files
     base_sched_file, ctrl_sched_file = prepare_schedules(home_path, schedule_cfg, t_res)
-
+    
     hpxml_file = os.path.join(home_path, XML_ADDRESS)
     results_dir = os.path.join(home_path, "Results")
     os.makedirs(results_dir, exist_ok=True)
@@ -714,12 +714,12 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     if EV_SIMULATION == "ON":
         home_charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
         home_ev_capacity = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
-
+        
         if home_charger_kw > 8:
             home_charger = "Level 2"
         else:
             home_charger = "Level 1"
-
+            
         equipment["EV"] = {
             "vehicle_type": "BEV",
             "capacity": home_ev_capacity,
@@ -749,27 +749,27 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     random.seed(home_seed)
     np.random.seed(home_seed)
     base_dwelling = Dwelling(name="Home Baseline", hpxml_schedule_file=base_sched_file, **copy.deepcopy(dwelling_args_local))
-
+    
     for t_base in base_dwelling.sim_times:
         # Build baseline control dynamically so we don't crash if things are OFF
         base_ctrl = {}
         if WH_SIMULATION == "ON":
             base_ctrl["Water Heating"] = {"Setpoint": WH_TbaselineC, "Deadband": WH_TdeadbandC, "Load Fraction": 1}
-
+        
         if HVAC_SIMULATION == "ON":
             base_ctrl["HVAC Cooling"] = {"Setpoint": AC_TbaselineC, "Deadband": AC_TdeadbandC, "Load Fraction": 1}
             base_ctrl["HVAC Heating"] = {"Setpoint": HEAT_TbaselineC, "Deadband": HEAT_TdeadbandC, "Load Fraction": 1}
-
+        
         if EV_SIMULATION == "ON" and home_charger_kw is not None:
             base_ctrl["EV"] = {"Max Power": home_charger_kw}
-
+                
         base_dwelling.update(control_signal=base_ctrl)
     df_base, _, _ = base_dwelling.finalize()
 
     # Generate random response time delays for WH and HVAC for this home
     wh_delay_sec = random.uniform(WH_RESPONSE_MIN, WH_RESPONSE_MAX)
     hvac_delay_sec = random.uniform(HVAC_RESPONSE_MIN, HVAC_RESPONSE_MAX)
-
+    
     wh_delay = pd.Timedelta(seconds=wh_delay_sec)
     hvac_delay = pd.Timedelta(seconds=hvac_delay_sec)
 
@@ -778,18 +778,18 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     random.seed(home_seed)
     np.random.seed(home_seed)
     sim_dwelling = Dwelling(name="Home Controlled", hpxml_schedule_file=ctrl_sched_file, **copy.deepcopy(dwelling_args_local))
-
+    
     # Get HPWH unit only if WH_SIMULATION is ON
     hpwh_unit = None
     if WH_SIMULATION == "ON":
         hpwh_unit = sim_dwelling.get_equipment_by_end_use('Water Heating')
-
+        
     for sim_time in sim_dwelling.sim_times:
         # Provide a default temp if WH is off so determine_control still works
         current_setpt = WH_TinitC 
         if hpwh_unit is not None:
             current_setpt = hpwh_unit.schedule.loc[sim_time, 'Water Heating Setpoint (C)']
-
+            
         control_cmd = determine_control(
             sim_time=sim_time, 
             current_temp_c=current_setpt, 
@@ -798,18 +798,18 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
             wh_delay=wh_delay,
             hvac_delay=hvac_delay
         )
-
+        
         if control_cmd:
             sim_dwelling.update(control_signal=control_cmd)
         else:
             sim_dwelling.update()
-
+            
     df_ctrl, _, _ = sim_dwelling.finalize()
 
     # --- Formatting Output ---
     df_ctrl = remove_first_day(df_ctrl, Start)
     df_base = remove_first_day(df_base, Start)
-
+    
     # Dynamically build output columns based on what's turned ON
     CTRL_COLS = ["Time", "Total Electric Power (kW)", "Total Electric Energy (kWh)"]
     if WH_SIMULATION == "ON":
@@ -824,11 +824,11 @@ def simulate_home(home_path, weather_file_path, schedule_cfg):
     if BATTERY_SIMULATION == "ON":
         CTRL_COLS.append("Battery Electric Power (kW)")
         CTRL_COLS.append("Battery SOC (-)")
-
+    
     # Keep only the columns that actually exist in the DataFrame
     df_ctrl = df_ctrl[[c for c in CTRL_COLS if c in df_ctrl.columns]]
     df_base = df_base[[c for c in CTRL_COLS if c in df_base.columns]]
-
+        
     df_ctrl.to_csv(os.path.join(results_dir, 'home_controlled.csv'), index=False)
     df_base.to_csv(os.path.join(results_dir, 'home_baseline.csv'), index=False)
 
@@ -923,10 +923,10 @@ if __name__ == "__main__":
             # home_num = sum(int(c) for c in home_basename if c.isdigit())
             home_num_str = re.sub(r'\D', '', home_basename)
             home_num = int(home_num_str) if home_num_str else 0
-
+            
             # Generate the exact shifted timedeltas for THIS specific home
             home_sched_td = create_home_schedule(my_schedule1, bins=bins, home_idx=home_num)
-
+            
             # Submit to the thread pool
             futures.append(executor.submit(simulate_home, home, WEATHER_FILE, home_sched_td))
 
@@ -965,7 +965,7 @@ def aggregate_results(homes, work_dir):
     if all_base:
         df_base_all = pd.concat(all_base, ignore_index=True)
         df_base_all.to_csv(os.path.join(work_dir, filename + "_baseline.csv"), index=False)
-
+    
     print(f"Aggregated CSVs written! {count}")
 
 if __name__ == "__main__":

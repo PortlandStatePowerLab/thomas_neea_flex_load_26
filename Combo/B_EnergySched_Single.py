@@ -28,7 +28,7 @@ import random
 # USER SETTINGS
 #########################################
 
-filename = 'IEEE_PES_GM_27_AllDevices_13'  
+filename = 'IEEE_PES_GM_27_WH_Shedtest'  
 Input_folder = "IEEE PES GM 2027 All Input Files"
 
 # Original OCHRE defaults folder
