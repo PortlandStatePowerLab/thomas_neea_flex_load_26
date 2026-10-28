@@ -77,7 +77,7 @@ DEVICE_CONFIG = {
         'folder': 'IEEE_PES_GM_27_Battery_Impulse_2',
         'baseline': 'IEEE_PES_GM_27_Battery_Impulse_2_baseline_BATT_power.csv',
         'controlled': 'IEEE_PES_GM_27_Battery_Impulse_2_controlled_BATT_power.csv',
-        'color': '#17BECF',  # Cyan
+        'color': '#E6AB02',  # Yellow
         'ylim': (-0.35, 0.35)
     }
 }
@@ -302,7 +302,7 @@ def generate_impulse_plots(base_pes_dir, save_dir, mode="GRID"):
         for dev_name, color, ylim in devices_to_plot:
             fig, ax = plt.subplots(figsize=(6.5, 3.0), dpi=300)
             plot_panel(ax, df_data, dev_name, line_color=color, ylim=ylim,
-                       title=f'{dev_name} Impulse Response: Baseline vs. Controlled (n=468)',
+                       title=f'{dev_name} Average Impulse Response (n=468)',
                        show_legend=True, show_xticklabels=True)
             
             plt.tight_layout()

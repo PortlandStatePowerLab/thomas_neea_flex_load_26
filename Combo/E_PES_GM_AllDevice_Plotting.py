@@ -20,8 +20,8 @@ import matplotlib.ticker as ticker
 # ---------------------------------------------------------
 
 # SWITCH AT THE TOP: Choose "IMPULSE", "RAMPED", or "BOTH"
-PLOT = "BOTH"
-# PLOT = "IMPULSE"
+# PLOT = "BOTH"
+PLOT = "IMPULSE"
 # PLOT = "RAMPED"
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -124,7 +124,7 @@ def load_impulse10_data(excel_path, target_sheet='Sheet1'):
 # ---------------------------------------------------------
 # PANEL PLOTTING HELPER
 # ---------------------------------------------------------
-def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xticklabels=True):
+def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xticklabels=True, annotate_ramps=False):
     """Plots a single panel (Primary Power axis + Secondary Command Ramping axis)."""
     styles = {
         'Baseline':     {'color': '#000000', 'linestyle': '--', 'linewidth': 3.0, 'alpha': 1.0, 'zorder': 5},
@@ -133,7 +133,7 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
         'HVAC':         {'color': '#2CA02C', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.5},
         'Dryer':        {'color': '#9467BD', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.5},
         'EV':           {'color': '#D62728', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.5},
-        'Battery':      {'color': '#17BECF', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.5},
+        'Battery':      {'color': '#E6AB02', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.5},
     }
 
     # --- PRIMARY AXIS: Power Consumption ---
@@ -167,6 +167,40 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
 
         ax2.plot(cmd['times'], y_vals, color=cmd['color'], linewidth=1.5)
         ax2.fill_between(cmd['times'], y_vals, color=cmd['color'], alpha=0.20, label=label)
+
+    # --- RAMP ANNOTATIONS (ARROW LABELS FOR RAMPED SCENARIO) ---
+    if annotate_ramps:
+        # 1. Load up ramp in
+        ax2.annotate('Load up ramp in', 
+                     xy=(pd.to_datetime('08:30', format='%H:%M'), 0.50), 
+                     xytext=(pd.to_datetime('04:30', format='%H:%M'), 0.80),
+                     arrowprops=dict(arrowstyle='->', color='#0055CC', lw=1.5), 
+                     fontsize=9.5, color='#0055CC', fontweight='bold',
+                     bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85, edgecolor='none'))
+
+        # 2. Load up ramp out
+        ax2.annotate('Load up ramp out', 
+                     xy=(pd.to_datetime('13:30', format='%H:%M'), 0.68), 
+                     xytext=(pd.to_datetime('09:15', format='%H:%M'), 0.94),
+                     arrowprops=dict(arrowstyle='->', color='#0055CC', lw=1.5), 
+                     fontsize=9.5, color='#0055CC', fontweight='bold',
+                     bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85, edgecolor='none'))
+
+        # 3. Shed Ramp in
+        ax2.annotate('Shed Ramp in', 
+                     xy=(pd.to_datetime('16:30', format='%H:%M'), 0.68), 
+                     xytext=(pd.to_datetime('14:15', format='%H:%M'), 0.94),
+                     arrowprops=dict(arrowstyle='->', color='#B00088', lw=1.5), 
+                     fontsize=9.5, color='#B00088', fontweight='bold',
+                     bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85, edgecolor='none'))
+
+        # 4. Shed ramp out
+        ax2.annotate('Shed ramp out', 
+                     xy=(pd.to_datetime('21:00', format='%H:%M'), 0.50), 
+                     xytext=(pd.to_datetime('19:00', format='%H:%M'), 0.84),
+                     arrowprops=dict(arrowstyle='->', color='#B00088', lw=1.5), 
+                     fontsize=9.5, color='#B00088', fontweight='bold',
+                     bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85, edgecolor='none'))
 
     # --- FORMATTING & LEGEND ---
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
@@ -207,7 +241,7 @@ def plot_impulse_data(excel_path, mode, save_path):
         target_sheet = 'Sheet1' if mode.upper() == "IMPULSE" else 'Sheet2'
         df_data = load_impulse10_data(excel_path, target_sheet=target_sheet)
         
-        plot_panel(ax1, df_data, active_commands, plot_title, show_legend=True, show_xticklabels=True)
+        plot_panel(ax1, df_data, active_commands, plot_title, show_legend=True, show_xticklabels=True, annotate_ramps=(mode.upper() == "RAMPED"))
         
     elif mode.upper() == "BOTH":
         # Subplot Mode: Impulse (Top) above Ramped (Bottom)
@@ -216,12 +250,12 @@ def plot_impulse_data(excel_path, mode, save_path):
         # Top Subplot: Impulse
         df_impulse = load_impulse10_data(excel_path, target_sheet='Sheet1')
         commands_impulse = get_active_commands(plot_type="IMPULSE")
-        plot_panel(ax_top, df_impulse, commands_impulse, plot_title_impulse, show_legend=False, show_xticklabels=True)
+        plot_panel(ax_top, df_impulse, commands_impulse, plot_title_impulse, show_legend=False, show_xticklabels=True, annotate_ramps=False)
         
-        # Bottom Subplot: Ramped
+        # Bottom Subplot: Ramped (with Ramp In/Out Arrow Annotations)
         df_ramped = load_impulse10_data(excel_path, target_sheet='Sheet2')
         commands_ramped = get_active_commands(plot_type="RAMPED")
-        plot_panel(ax_bot, df_ramped, commands_ramped, plot_title_ramped, show_legend=True, show_xticklabels=True)
+        plot_panel(ax_bot, df_ramped, commands_ramped, plot_title_ramped, show_legend=True, show_xticklabels=True, annotate_ramps=True)
 
     plt.tight_layout()
     

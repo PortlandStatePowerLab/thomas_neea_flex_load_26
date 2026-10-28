@@ -651,6 +651,7 @@ def run_c1_parsing():
 #########################################
 
 def save_avg(file_path):
+    """Calculates and appends the average row across households if missing."""
     if os.path.exists(file_path):
         df = pd.read_csv(file_path)
         averages = df.mean(numeric_only=True)
@@ -658,141 +659,159 @@ def save_avg(file_path):
         df.to_csv(file_path, index=False)
 
 def get_active_commands():
+    """Hardcoded Demand Response event schedule (Load Up starting at 08:30)."""
     commands = []
-    for cmd_key, times in my_schedule1.items():
-        if 'rampin_start' in cmd_key:
-            cmd_name = cmd_key.replace('_rampin_start', '')
-            t0 = pd.to_datetime(my_schedule1[f"{cmd_name}_rampin_start"], format='%H:%M')
-            t1 = pd.to_datetime(my_schedule1[f"{cmd_name}_rampin_end"], format='%H:%M')
-            t2 = pd.to_datetime(my_schedule1[f"{cmd_name}_rampout_start"], format='%H:%M')
-            t3 = pd.to_datetime(my_schedule1[f"{cmd_name}_rampout_end"], format='%H:%M')
-
-            if 'ALU' in cmd_name: c_type, color = 'Advanced Load Up', "#00FF087C"
-            elif 'LU' in cmd_name: c_type, color = 'Load Up', "#0077FF85"
-            elif 'CP' in cmd_name: c_type, color = 'Critical Peak', "#FF660083"
-            elif 'GE' in cmd_name: c_type, color = 'Grid Emergency', "#FF00008F"
-            elif 'S' in cmd_name: c_type, color = 'Shed', "#FF00DD8D"
-            else: c_type, color = 'Other', '#9E9E9E'
-
-            commands.append({'type': c_type, 'color': color, 'times': [t0, t1, t2, t3]})
+    
+    # Load Up Command sent at 08:30 AM (08:30 to 10:00 study window)
+    t0_lu = pd.to_datetime('08:30', format='%H:%M')
+    t1_lu = pd.to_datetime('08:30', format='%H:%M')
+    t2_lu = pd.to_datetime('09:00', format='%H:%M')
+    t3_lu = pd.to_datetime('09:00', format='%H:%M')
+    commands.append({'type': 'Load Up', 'color': "#0077FF85", 'times': [t0_lu, t1_lu, t2_lu, t3_lu]})
+    
     return commands
 
+def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xticklabels=True):
+    """
+    Plots a single panel with Primary Power/SOC axis and Secondary Command Ramping axis.
+    Formatted to match E_PES_GM_AllDevice_Plotting style.
+    """
+    styles = {
+        'Baseline':     {'color': '#000000', 'linestyle': '--', 'linewidth': 3.0, 'alpha': 1.0, 'zorder': 5},
+        'Controlled':   {'color': '#E26D28', 'linestyle': '-',  'linewidth': 3.0, 'alpha': 1.0, 'zorder': 6},
+        'All Devices':  {'color': '#E26D28', 'linestyle': '-',  'linewidth': 3.0, 'alpha': 1.0, 'zorder': 6},
+        'WH': {'color': "#1207A8", 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
+        'HVAC': {'color': '#2CA02C', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
+        'HVAC Heating': {'color': '#2CA02C', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
+        'Dryer':        {'color': '#9467BD', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
+        'EV':           {'color': '#D62728', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
+        'Battery':      {'color': "#E6AB02", 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
+    }
+
+    # --- PRIMARY AXIS: Power Consumption or SOC ---
+    ylabel = 'State of Charge (-)' if ('SOC' in title or 'State of Charge' in title) else 'Power (kW)'
+    
+    for device, style in styles.items():
+        if device in df.columns:
+            ax1.plot(df['Time'], df[device], label=device, **style)
+
+    ax1.set_ylabel(ylabel, fontsize=13, fontweight='bold')
+    ax1.set_title(title, fontsize=13, fontweight='bold', pad=12)
+    ax1.grid(True, alpha=0.35, linestyle=':')
+    ax1.tick_params(axis='both', which='major', labelsize=11)
+
+    # Set X-Axis limits strictly to study window (08:00 to 10:00)
+    xmin = pd.to_datetime('08:00', format='%H:%M')
+    xmax = pd.to_datetime('09:00', format='%H:%M')
+    ax1.set_xlim(xmin, xmax)
+
+    # --- SECONDARY AXIS: Command Ramping (Load Up) ---
+    ax2 = ax1.twinx()
+    # ax2.set_ylabel('Fraction of units given command', fontsize=13, fontweight='bold')
+    ax2.set_ylim(0, 1.0)
+    ax2.set_yticks([])
+    # ax2.tick_params(axis='y', which='major', labelsize=11)
+
+    added_labels = set()
+    for cmd in schedule_commands:
+        y_vals = [0, 1, 1, 0]  # Trapezoid profile
+        label = cmd['type'] if cmd['type'] not in added_labels else ""
+        if label:
+            added_labels.add(label)
+
+        ax2.plot(cmd['times'], y_vals, color=cmd['color'], linewidth=1.5)
+        ax2.fill_between(cmd['times'], y_vals, color=cmd['color'], alpha=0.20, label=label)
+
+    # --- FORMATTING & LEGEND ---
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax1.xaxis.set_major_locator(mdates.MinuteLocator(interval=15))
+    
+    if show_xticklabels:
+        plt.setp(ax1.get_xticklabels(), rotation=35, ha='right')
+    else:
+        plt.setp(ax1.get_xticklabels(), visible=False)
+
+    if show_legend:
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        
+        ax1.legend(
+            lines1 + lines2, 
+            labels1 + labels2, 
+            loc='upper center', 
+            bbox_to_anchor=(0.5, -0.22), 
+            ncol=3, 
+            frameon=True,
+            facecolor='#F9F9F9',
+            edgecolor='#E0E0E0',
+            fontsize=11
+        )
+
 def plot_data(baseline_file, controlled_file, title, photo_file, schedule_commands):
+    """Plots Baseline vs Controlled comparisons for an individual device or total load."""
     if not (os.path.exists(baseline_file) and os.path.exists(controlled_file)):
         return
 
     df_base = pd.read_csv(baseline_file, index_col=0)
     df_con = pd.read_csv(controlled_file, index_col=0)
 
-    # Calculate the number of homes (total rows minus the 'Average' row)
+    # Calculate number of homes (total rows minus 'Average' row)
     num_homes = len(df_base) - 1
 
-    df_base = pd.DataFrame(df_base.iloc[[0, -1]].iloc[1, :]).reset_index()
-    df_con = pd.DataFrame(df_con.iloc[[0, -1]].iloc[1, :]).reset_index()
+    # Extract average row (last row)
+    avg_base = df_base.iloc[-1]
+    avg_con = df_con.iloc[-1]
 
-    df_base.columns = ['Time', 'baseline']
-    df_con.columns = ['Time', 'controlled']
+    df_plot = pd.DataFrame({
+        'Time': pd.to_datetime(df_base.columns, format='%H:%M', errors='coerce'),
+        'Baseline': pd.to_numeric(avg_base.values, errors='coerce'),
+        'Controlled': pd.to_numeric(avg_con.values, errors='coerce')
+    })
 
-    df_base['Time'] = pd.to_datetime(df_base['Time'], format='%H:%M', errors='coerce')
-    df_con['Time'] = pd.to_datetime(df_con['Time'], format='%H:%M', errors='coerce')
-
-    fig, ax1 = plt.subplots(figsize=(9, 6))
-
-    ax1.plot(df_base['Time'], df_base['baseline'], label='Baseline', color='#004C6D', linewidth=2)
-    ax1.plot(df_con['Time'], df_con['controlled'], label='Controlled', color='#E26D28', linewidth=2)
-    ax1.set_ylabel('Power (kW)')
-    ax1.set_title(f"{title} (n={num_homes})")
-    ax1.grid(True, alpha=0.3)
-
-    # Lock x-axis strictly to 08:00 - 10:00 with 15-minute intervals
-    t_start = pd.to_datetime('08:00', format='%H:%M')
-    t_end = pd.to_datetime('09:00', format='%H:%M')
-    ax1.set_xlim(t_start, t_end)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    ax1.xaxis.set_major_locator(mdates.MinuteLocator(interval=15))
-    plt.setp(ax1.get_xticklabels(), rotation=45)
-
-    ax2 = ax1.twinx()
-    ax2.set_ylabel('Fraction of units given command')
-    ax2.set_ylim(0, 1)
-
-    added_labels = set()
-    for cmd in schedule_commands:
-        y_vals = [0, 1, 1, 0]
-        label = cmd['type'] if cmd['type'] not in added_labels else ""
-        if label: added_labels.add(label)
-        ax2.plot(cmd['times'], y_vals, color=cmd['color'], linewidth=1)
-        ax2.fill_between(cmd['times'], y_vals, color=cmd['color'], alpha=0.1, label=label)
-
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False)
+    fig, ax1 = plt.subplots(figsize=(6.5, 3.0), dpi=300)
+    full_title = f"{title} (n={num_homes})" if num_homes > 0 else title
+    
+    plot_panel(ax1, df_plot, schedule_commands, full_title, show_legend=True, show_xticklabels=True)
 
     plt.tight_layout()
     plt.savefig(photo_file, dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_combined_controlled_loads(folder_path, schedule_commands, photo_file):
-    """Plots controlled WH, HVAC (AC/HEAT), and Battery power consumption on the same axes."""
-    fig, ax1 = plt.subplots(figsize=(9, 6))
-    
+    """Plots ONLY controlled Water Heating, HVAC Cooling, and Battery power consumption on the same panel."""
     device_configs = [
-        ('Water Heating', '_WH_power.csv', "#A31401"),
-        ('HVAC Cooling', '_AC_power.csv', "#00ACAC"),
-        ('Battery', '_BATT_power.csv', '#EDAE49')
+        ('WH', '_WH_power.csv'),
+        ('HVAC', '_AC_power.csv'),
+        ('Battery', '_BATT_power.csv')
     ]
-    
-    has_data = False
+
+    df_plot = None
     num_homes = None
-    for label, suffix, color in device_configs:
+
+    for label, suffix in device_configs:
         ctrl_f = os.path.join(folder_path, filename + "_controlled" + suffix)
         if os.path.exists(ctrl_f):
             df_con = pd.read_csv(ctrl_f, index_col=0)
             if not df_con.empty:
                 if num_homes is None:
                     num_homes = len(df_con) - 1
-                avg_series = df_con.iloc[-1]
-                df_plot = pd.DataFrame(avg_series).reset_index()
-                df_plot.columns = ['Time', 'Power']
-                df_plot['Time'] = pd.to_datetime(df_plot['Time'], format='%H:%M', errors='coerce')
+                avg_series = pd.to_numeric(df_con.iloc[-1].values, errors='coerce')
                 
-                ax1.plot(df_plot['Time'], df_plot['Power'], label=f'{label} (Controlled)', color=color, linewidth=2)
-                has_data = True
+                if df_plot is None:
+                    time_vals = pd.to_datetime(df_con.columns, format='%H:%M', errors='coerce')
+                    df_plot = pd.DataFrame({'Time': time_vals})
+                
+                df_plot[label] = avg_series
 
-    if not has_data:
-        plt.close()
+    if df_plot is None or len(df_plot.columns) <= 1:
         return
 
-    ax1.set_ylabel('Power (kW)')
-    title_text = 'Controlled Power Consumption: WH, HVAC & Battery'
-    if num_homes is not None:
-        title_text += f' (n={num_homes})'
-    ax1.set_title(title_text)
-    ax1.grid(True, alpha=0.3)
+    fig, ax1 = plt.subplots(figsize=(6.5, 3.0), dpi=300)
+    title_text = "Power Consumption: WH, HVAC & Battery"
+    if num_homes is not None and num_homes > 0:
+        title_text += f" (n={num_homes})"
 
-    # Lock x-axis strictly to 08:00 - 10:00 with 15-minute intervals
-    t_start = pd.to_datetime('08:00', format='%H:%M')
-    t_end = pd.to_datetime('09:00', format='%H:%M')
-    ax1.set_xlim(t_start, t_end)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    ax1.xaxis.set_major_locator(mdates.MinuteLocator(interval=15))
-    plt.setp(ax1.get_xticklabels(), rotation=45)
-
-    ax2 = ax1.twinx()
-    ax2.set_ylabel('Fraction of units given command')
-    ax2.set_ylim(0, 1)
-
-    added_labels = set()
-    for cmd in schedule_commands:
-        y_vals = [0, 1, 1, 0]
-        label = cmd['type'] if cmd['type'] not in added_labels else ""
-        if label: added_labels.add(label)
-        ax2.plot(cmd['times'], y_vals, color=cmd['color'], linewidth=1)
-        ax2.fill_between(cmd['times'], y_vals, color=cmd['color'], alpha=0.1, label=label)
-
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False)
+    plot_panel(ax1, df_plot, schedule_commands, title_text, show_legend=True, show_xticklabels=True)
 
     plt.tight_layout()
     plt.savefig(photo_file, dpi=300, bbox_inches='tight')
@@ -826,8 +845,8 @@ def run_c2_plotting():
         save_avg(ctrl_f)
         plot_data(base_f, ctrl_f, title, img_f, active_commands)
 
-    # Generate multi-device controlled plot for WH, HVAC, and Battery
-    comb_img_f = os.path.join(folder_path, filename + "_controlled_WH_HVAC_Battery_plot.png")
+    # Multi-device combined plot strictly for Water Heater, HVAC Cooling, and Battery
+    comb_img_f = os.path.join(folder_path, filename + "_controlled_WH_HVAC_Battery_plot.pdf")
     plot_combined_controlled_loads(folder_path, active_commands, comb_img_f)
 
 #########################################
