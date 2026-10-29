@@ -196,13 +196,10 @@ def plot_panel(ax1, df, dev_name, line_color, ylim=None, title=None, show_legend
     xmax = df['Time'].max()  # Automatically sets to the last time step (23:45:00)
     ax1.set_xlim(xmin, xmax)
 
-
-    # # --- SECONDARY AXIS: Command Ramping (Load Up / Shed) ---
+    # --- SECONDARY AXIS: Command Ramping (Load Up / Shed) ---
     ax2 = ax1.twinx()
-    # ax2.set_ylabel('Fraction of units commanded', fontsize=10, fontweight='bold', color='#555555')
     ax2.set_ylim(0, 1)
     ax2.set_yticks([])
-    # ax2.tick_params(axis='y', which='major', labelsize=9, colors='#555555')
 
     added_labels = set()
     for cmd in schedule_commands:
@@ -227,16 +224,16 @@ def plot_panel(ax1, df, dev_name, line_color, ylim=None, title=None, show_legend
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         
+        # Positioned in top-left corner inside the plot axes
         ax1.legend(
             lines1 + lines2, 
             labels1 + labels2, 
-            loc='upper center', 
-            bbox_to_anchor=(0.5, -0.28 if show_xticklabels else -0.15), 
-            ncol=4, 
+            loc='upper left', 
+            ncol=2,  # Set to 2 columns (use ncol=1 for a vertical list)
             frameon=True,
             facecolor='#F9F9F9',
             edgecolor='#E0E0E0',
-            fontsize=10
+            fontsize=9
         )
 
 
@@ -300,7 +297,7 @@ def generate_impulse_plots(base_pes_dir, save_dir, mode="GRID"):
         ]
 
         for dev_name, color, ylim in devices_to_plot:
-            fig, ax = plt.subplots(figsize=(6.5, 3.0), dpi=300)
+            fig, ax = plt.subplots(figsize=(6.5, 2.5), dpi=300)
             plot_panel(ax, df_data, dev_name, line_color=color, ylim=ylim,
                        title=f'{dev_name} Average Impulse Response (n=468)',
                        show_legend=True, show_xticklabels=True)

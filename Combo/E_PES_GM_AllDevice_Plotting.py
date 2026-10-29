@@ -21,7 +21,7 @@ import matplotlib.ticker as ticker
 
 # SWITCH AT THE TOP: Choose "IMPULSE", "RAMPED", or "BOTH"
 # PLOT = "BOTH"
-PLOT = "IMPULSE"
+PLOT = "IMPULSE" 
 # PLOT = "RAMPED"
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -124,7 +124,7 @@ def load_impulse10_data(excel_path, target_sheet='Sheet1'):
 # ---------------------------------------------------------
 # PANEL PLOTTING HELPER
 # ---------------------------------------------------------
-def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xticklabels=True, annotate_ramps=False):
+def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xticklabels=True, annotate_ramps=False, legend_position="upper_left"):
     """Plots a single panel (Primary Power axis + Secondary Command Ramping axis)."""
     styles = {
         'Baseline':     {'color': '#000000', 'linestyle': '--', 'linewidth': 3.0, 'alpha': 1.0, 'zorder': 5},
@@ -216,17 +216,30 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         
-        ax1.legend(
-            lines1 + lines2, 
-            labels1 + labels2, 
-            loc='upper center', 
-            bbox_to_anchor=(0.5, -0.22), 
-            ncol=3, 
-            frameon=True,
-            facecolor='#F9F9F9',
-            edgecolor='#E0E0E0',
-            fontsize=11
-        )
+        if legend_position == "upper_left":
+            ax1.legend(
+                lines1 + lines2, 
+                labels1 + labels2, 
+                loc='upper left', 
+                ncol=2, 
+                frameon=True,
+                facecolor='#F9F9F9',
+                edgecolor='#E0E0E0',
+                fontsize=10
+            )
+        else:
+            # "below" option
+            ax1.legend(
+                lines1 + lines2, 
+                labels1 + labels2, 
+                loc='upper center', 
+                bbox_to_anchor=(0.5, -0.22), 
+                ncol=3, 
+                frameon=True,
+                facecolor='#F9F9F9',
+                edgecolor='#E0E0E0',
+                fontsize=11
+            )
 
 
 # ---------------------------------------------------------
@@ -235,31 +248,52 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
 def plot_impulse_data(excel_path, mode, save_path):
     if mode.upper() in ["IMPULSE", "RAMPED"]:
         # Single Plot Mode
-        fig, ax1 = plt.subplots(figsize=(8.5, 5.0), dpi=300)
+        fig, ax1 = plt.subplots(figsize=(8.5, 4.0), dpi=300)
         
         active_commands = get_active_commands(plot_type=mode)
         target_sheet = 'Sheet1' if mode.upper() == "IMPULSE" else 'Sheet2'
         df_data = load_impulse10_data(excel_path, target_sheet=target_sheet)
         
-        plot_panel(ax1, df_data, active_commands, plot_title, show_legend=True, show_xticklabels=True, annotate_ramps=(mode.upper() == "RAMPED"))
+        is_ramped = (mode.upper() == "RAMPED")
+        legend_pos = "below" if is_ramped else "upper_left"
+        
+        plot_panel(
+            ax1, df_data, active_commands, plot_title, 
+            show_legend=True, 
+            show_xticklabels=True, 
+            annotate_ramps=is_ramped,
+            legend_position=legend_pos
+        )
         
     elif mode.upper() == "BOTH":
         # Subplot Mode: Impulse (Top) above Ramped (Bottom)
         fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(8.5, 9.5), dpi=300)
         
-        # Top Subplot: Impulse
+        # Top Subplot: Impulse (Legend inside top-left)
         df_impulse = load_impulse10_data(excel_path, target_sheet='Sheet1')
         commands_impulse = get_active_commands(plot_type="IMPULSE")
-        plot_panel(ax_top, df_impulse, commands_impulse, plot_title_impulse, show_legend=False, show_xticklabels=True, annotate_ramps=False)
+        plot_panel(
+            ax_top, df_impulse, commands_impulse, plot_title_impulse, 
+            show_legend=True, 
+            show_xticklabels=True, 
+            annotate_ramps=False,
+            legend_position="upper_left"
+        )
         
-        # Bottom Subplot: Ramped (with Ramp In/Out Arrow Annotations)
+        # Bottom Subplot: Ramped (Legend below chart)
         df_ramped = load_impulse10_data(excel_path, target_sheet='Sheet2')
         commands_ramped = get_active_commands(plot_type="RAMPED")
-        plot_panel(ax_bot, df_ramped, commands_ramped, plot_title_ramped, show_legend=True, show_xticklabels=True, annotate_ramps=True)
+        plot_panel(
+            ax_bot, df_ramped, commands_ramped, plot_title_ramped, 
+            show_legend=True, 
+            show_xticklabels=True, 
+            annotate_ramps=True,
+            legend_position="below"
+        )
 
     plt.tight_layout()
     
-    # Save both vector PDF (for LaTeX/Word sharp rendering) and high-DPI PNG
+    # Save both vector PDF and high-DPI PNG
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     png_path = save_path.replace('.pdf', '.png')
     plt.savefig(png_path, dpi=300, bbox_inches='tight')

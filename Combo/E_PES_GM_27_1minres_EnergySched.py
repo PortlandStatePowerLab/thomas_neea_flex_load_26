@@ -28,7 +28,7 @@ import matplotlib.dates as mdates
 
 # --- TOGGLE SWITCH FOR SIMULATION ---
 # Set to False to skip OCHRE simulation and quickly adjust/re-generate plots
-RUN_SIMULATION = False  
+RUN_SIMULATION = False
 
 filename = 'IEEE_PES_GM_27_1min_1'
 Input_folder = "IEEE PES GM 2027 All Input Files"
@@ -55,7 +55,7 @@ t_res = 1  # 1 minute time resolution
 
 # Study window for output data and plotting
 STUDY_START_TIME = dt.time(8, 0)
-STUDY_END_TIME = dt.time(10, 0)
+STUDY_END_TIME = dt.time(9, 0)
 
 # ---------------------------------------------------------
 # CONTROL PARAMETERS (°F)
@@ -680,8 +680,8 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
         'Baseline':     {'color': '#000000', 'linestyle': '--', 'linewidth': 3.0, 'alpha': 1.0, 'zorder': 5},
         'Controlled':   {'color': '#E26D28', 'linestyle': '-',  'linewidth': 3.0, 'alpha': 1.0, 'zorder': 6},
         'All Devices':  {'color': '#E26D28', 'linestyle': '-',  'linewidth': 3.0, 'alpha': 1.0, 'zorder': 6},
-        'WH': {'color': "#1207A8", 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
-        'HVAC': {'color': '#2CA02C', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
+        'WH':           {'color': "#1207A8", 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
+        'HVAC':         {'color': '#2CA02C', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
         'HVAC Heating': {'color': '#2CA02C', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
         'Dryer':        {'color': '#9467BD', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
         'EV':           {'color': '#D62728', 'linestyle': '-',  'linewidth': 2.0, 'alpha': 0.85},
@@ -707,10 +707,8 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
 
     # --- SECONDARY AXIS: Command Ramping (Load Up) ---
     ax2 = ax1.twinx()
-    # ax2.set_ylabel('Fraction of units given command', fontsize=13, fontweight='bold')
     ax2.set_ylim(0, 1.0)
     ax2.set_yticks([])
-    # ax2.tick_params(axis='y', which='major', labelsize=11)
 
     added_labels = set()
     for cmd in schedule_commands:
@@ -735,16 +733,17 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         
+        # Positioned inside top-left corner without bbox_to_anchor offset
         ax1.legend(
             lines1 + lines2, 
             labels1 + labels2, 
-            loc='upper center', 
-            bbox_to_anchor=(0.5, -0.22), 
-            ncol=3, 
+            loc='upper left', 
+            ncol=2, 
             frameon=True,
             facecolor='#F9F9F9',
             edgecolor='#E0E0E0',
-            fontsize=11
+            fontsize=9.5,
+            columnspacing=1.0
         )
 
 def plot_data(baseline_file, controlled_file, title, photo_file, schedule_commands):
