@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'IEEE_PES_GM_27_WH_LUtest' 
+input_file_root = 'Loadshape_Test_5' 
 
 # ---------------------------------------------------------
 # LOAD DEVICES FROM CSV

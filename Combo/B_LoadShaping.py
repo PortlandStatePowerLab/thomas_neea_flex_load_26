@@ -17,13 +17,15 @@ from pathlib import Path
 import random
 import numpy as np
 import traceback
+import re
+import xml.etree.ElementTree as ET
 
 #########################################
 # USER SETTINGS
 #########################################
 
-filename = 'IEEE_PES_GM_27_AllDevices_1'
-Input_folder = "IEEE PES GM 2027 All Input Files"
+filename = 'Loadshape_Test_5'
+Input_folder = "Combo HPWH HVAC Dryer EV All Input Files"
 
 # Original OCHRE defaults folder
 ochre_dir = Path(ochre.__file__).resolve().parent
@@ -388,34 +390,10 @@ def filter_schedules(home_path):
     filtered_sched_file = os.path.join(home_path, 'filtered_schedules.csv')
 
     df_sched = pd.read_csv(orig_sched_file)
-    print("base columns")
-    print(df_sched.columns)
-    
-    # Inject the EV charging schedule if missing
-    if 'electric_vehicle_charging' not in df_sched.columns:
-        # A value of 1 means the EV is plugged in and available. 
-        # This defaults to always plugged in.
-        df_sched['electric_vehicle_charging'] = 1.0
-
     valid_schedule_names = set(ALL_SCHEDULE_NAMES.keys())
-    
-    # Catch any variation of EV / Vehicle schedules
-    filtered_columns = [
-        col for col in df_sched.columns 
-        if col in valid_schedule_names 
-        or 'ev' in col.lower() 
-        or 'vehicle' in col.lower()
-        or 'plug' in col.lower()
-    ]
-    
-    dropped_columns = [col for col in df_sched.columns if col not in filtered_columns]
-    if dropped_columns:
-        print(f"Dropped invalid schedules for {home_path}: {dropped_columns}")
+    filtered_columns = [col for col in df_sched.columns if col in valid_schedule_names]
 
-    df_sched_filtered = df_sched[filtered_columns]
-    print("filtered columns")
-    print(filtered_columns)
-    df_sched_filtered.to_csv(filtered_sched_file, index=False)
+    df_sched[filtered_columns].to_csv(filtered_sched_file, index=False)
     return filtered_sched_file
 
 def find_all_homes(base_dir):
@@ -528,6 +506,78 @@ def get_interpolated_vpp_settings(sim_time, hourly_settings):
 
     return is_active, sp, db
 
+def _build_ev_equipment(hpxml_file):
+    charger_kw = get_ev_charger_power(hpxml_file, DEFAULT_CHARGER_POWER_KW)
+    capacity_kwh = get_ev_capacity_or_range(hpxml_file, DEFAULT_CAPACITY_KWH)
+    return charger_kw, {
+        "vehicle_type": "BEV",
+        "capacity": capacity_kwh,
+        "charging_level": "Level 2" if charger_kw > 8 else "Level 1",
+        "max_power": charger_kw,
+    }
+
+def get_ev_charger_power(hpxml_path, default_kw=20):
+    """
+    Parses the home's HPXML file to determine the power the EV charger draws
+    """
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        
+        # Remove namespaces for easier tag matching
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+                
+        for charger in root.findall('.//ElectricVehicleCharger'):
+            charge_elem = charger.find('ChargingPower')
+            
+            if charge_elem is not None and charge_elem.text:
+                return float(charge_elem.text) / 1000
+                
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV charger level from {hpxml_path}. Using default {default_kw}. Error: {e}")
+    
+    return default_kw
+
+def get_ev_capacity_or_range(hpxml_path, default_capacity_kwh=60.0):
+    """
+    Parses the home's HPXML file to determine the EV's usable or nominal battery capacity.
+    Returns capacity in kWh.
+    """
+    try:
+        tree = ET.parse(hpxml_path)
+        root = tree.getroot()
+        
+        # Remove namespaces for easier tag matching
+        for elem in root.iter():
+            if '}' in elem.tag:
+                elem.tag = elem.tag.split('}', 1)[1]
+                
+        # Search for Battery element under ElectricVehicle/Vehicle
+        for battery in root.findall('.//Battery'):
+            # Prefer UsableCapacity, fallback to NominalCapacity
+            usable = battery.find('UsableCapacity/Value')
+            if usable is not None and usable.text:
+                return float(usable.text)
+                
+            nominal = battery.find('NominalCapacity/Value')
+            if nominal is not None and nominal.text:
+                return float(nominal.text)
+                
+    except Exception as e:
+        print(f"[WARNING] Failed to parse EV capacity from {hpxml_path}. Using default {default_capacity_kwh} kWh. Error: {e}")
+        
+    return default_capacity_kwh
+
+def is_ev_charging(home_data):
+    ev_eq = home_data["sim"].get_equipment_by_end_use("EV")
+    return (
+        ev_eq is not None
+        and getattr(ev_eq, "in_event", False)
+        and getattr(ev_eq, "electric_kw", 0.0) > 0.05
+    )
+
 #########################################
 # CONTROL & INITIALIZATION
 #########################################
@@ -597,7 +647,8 @@ def determine_control(sim_time, active_commands, home_charger_kw=None):
         ctrl_signal['HVAC Cooling'] = {'Setpoint': cool_cfg[0], 'Deadband': cool_cfg[1], 'Load Fraction': 1}
         ctrl_signal['HVAC Heating'] = {'Setpoint': heat_cfg[0], 'Deadband': heat_cfg[1], 'Load Fraction': 1}
 
-
+    home_charger_kw=home_data["home_charger_kw"]
+    
     # EV control (tracks global mode)
     if EV_SIMULATION == "ON" and home_charger_kw is not None:
         ev_mode = active_commands.get("EV", "NORMAL")
@@ -631,6 +682,13 @@ def init_base(home_path, weather_file_path):
     equipment = {}
     if BATTERY_SIMULATION == "ON":
         equipment["Battery"] = BATTERY_PARAMS
+
+    home_num_str = re.sub(r'\D', '', os.path.basename(home_path))
+    home_seed = int(home_num_str) if home_num_str else 0
+
+    home_charger_kw = None
+    if EV_SIMULATION == "ON":
+        home_charger_kw, equipment["EV"] = _build_ev_equipment(hpxml_file)
     
     dw = Dwelling(name=f"Base_{os.path.basename(home_path)}",
                   start_time=Start,
@@ -640,7 +698,8 @@ def init_base(home_path, weather_file_path):
                   hpxml_schedule_file=filtered_sched_file,
                   weather_file=weather_file_path,
                   verbosity=7,
-                  Equipment=equipment)
+                  Equipment=equipment,
+                  seed=home_seed)
     return {"path": home_path, "dw": dw}
 
 def init_ctrl(home_path, weather_file_path):
@@ -662,6 +721,13 @@ def init_ctrl(home_path, weather_file_path):
     if BATTERY_SIMULATION == "ON":
         equipment["Battery"] = BATTERY_PARAMS
 
+    home_num_str = re.sub(r'\D', '', os.path.basename(home_path))
+    home_seed = int(home_num_str) if home_num_str else 0
+
+    home_charger_kw = None
+    if EV_SIMULATION == "ON":
+        home_charger_kw, equipment["EV"] = _build_ev_equipment(hpxml_file)
+
     dw = Dwelling(name=f"Ctrl_{os.path.basename(home_path)}",
                   start_time=Start,
                   time_res=dt.timedelta(minutes=t_res),
@@ -670,11 +736,13 @@ def init_ctrl(home_path, weather_file_path):
                   hpxml_schedule_file=ctrl_sched_file,
                   weather_file=weather_file_path,
                   verbosity=7,
-                  Equipment=equipment)
+                  Equipment=equipment,
+                  seed=home_seed)
     
     return {
         "sim": dw, 
         "path": home_path,
+        "home_charger_kw": home_charger_kw,
         "device_states": {
             "WH": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": WH_RESPONSE_MIN, "max_delay": WH_RESPONSE_MAX},
             "HVAC": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": HVAC_RESPONSE_MIN, "max_delay": HVAC_RESPONSE_MAX},
@@ -722,11 +790,11 @@ if __name__ == "__main__":
     baseline_dwellings = []
     successful_homes = [] # Track which homes actually survived initialization
 
-    try:
-        init_base(homes[0], WEATHER_FILE)
-    except Exception:
-        traceback.print_exc()
-    quit()
+    # try:
+    #     init_base(homes[0], WEATHER_FILE)
+    # except Exception:
+    #     traceback.print_exc()
+    # quit()
     
     with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
         # Use a dictionary to map the future back to the home path for logging
@@ -963,7 +1031,7 @@ if __name__ == "__main__":
                 df_ctrl[h["dryer_col"]] = h["new_vals"]
             df_ctrl.to_csv(os.path.join(h["path"], 'filtered_schedules_ctrl.csv'), index=False)
 
-    # =========================================================================
+# =========================================================================
     # PASS 3: OCHRE CONTROL RUN (REACTIVE LOAD SHAPING)
     # =========================================================================
     print("--- PASS 3: Running Controlled OCHRE Simulation ---")
@@ -992,9 +1060,29 @@ if __name__ == "__main__":
         "EV": EV_SIMULATION, "BATTERY": BATTERY_SIMULATION
     }
 
+    # Helpers to verify live EV charging state and per-home charger capacity
+    def is_ev_charging(home_data):
+        ev_eq = home_data["sim"].get_equipment_by_end_use("EV")
+        if ev_eq is None or not getattr(ev_eq, "in_event", False):
+            return False
+        soc = getattr(ev_eq, "soc", 0.0)
+        soc_max = getattr(ev_eq, "soc_max_ctrl", 1.0)
+        return soc < (soc_max - 1e-4)
+
+    def get_device_cap_kw(home_data, dev):
+        if dev == "EV" and home_data.get("home_charger_kw") is not None:
+            return home_data["home_charger_kw"]
+        return FRAC_MAP[dev]["CAP"]
+
     print("Starting Co-Simulation Time Loop...")
     for sim_time in sim_times:
         
+        # Reset any EV that has unplugged or finished charging back to NORMAL
+        if EV_SIMULATION == "ON":
+            for h in fleet_data:
+                if h["device_states"]["EV"]["target_cmd"] != "NORMAL" and not is_ev_charging(h):
+                    h["device_states"]["EV"]["target_cmd"] = "NORMAL"
+
         # Determine smoothly interpolated VPP state and deadband from CSV schedule
         is_vpp_active, AVERAGE_SETPOINT_KW, AVERAGE_DEADBAND_KW = get_interpolated_vpp_settings(
             sim_time, hourly_settings
@@ -1046,24 +1134,30 @@ if __name__ == "__main__":
                     if dev == "DRYER": continue
                     
                     for active_cmd in ["ALU", "LU", "LOAD"]:
-                        homes_to_end = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == active_cmd]
+                        homes_to_end = [
+                            h for h in fleet_data
+                            if h["device_states"][dev]["target_cmd"] == active_cmd
+                            and (dev != "EV" or is_ev_charging(h))
+                        ]
                         random.shuffle(homes_to_end)
                         
                         # Use your explicit END_ fraction logic
                         frac_key = active_cmd if active_cmd != "LOAD" else "LU"
                         end_frac_key = f"END_{active_cmd}" if active_cmd != "LOAD" else "END_LU"
-                        drop_per_unit = (FRAC_MAP[dev][frac_key] - FRAC_MAP[dev][end_frac_key]) * FRAC_MAP[dev]['CAP']
+                        frac_diff = FRAC_MAP[dev][frac_key] - FRAC_MAP[dev][end_frac_key]
                         
-                        if drop_per_unit > 0:
-                            units = int(total_kw_to_drop / drop_per_unit)
-                            applied = min(units, len(homes_to_end))
-                            for h in homes_to_end[:applied]: h["device_states"][dev]["target_cmd"] = "NORMAL"
-                            total_kw_to_drop -= applied * drop_per_unit
+                        if frac_diff > 0:
+                            for h in homes_to_end:
+                                if total_kw_to_drop <= 0: break
+                                drop_per_unit = frac_diff * get_device_cap_kw(h, dev)
+                                if drop_per_unit > 0:
+                                    h["device_states"][dev]["target_cmd"] = "NORMAL"
+                                    total_kw_to_drop -= drop_per_unit
                         
                 # 2. Cascade into deeper shed commands (Conservative first across ALL devices)
                 shed_transitions = [
                     ("NORMAL", "SHED"),
-                    ("SHED", "CP"),f
+                    ("SHED", "CP"),
                     ("CP", "GE")
                 ]
                 
@@ -1077,18 +1171,23 @@ if __name__ == "__main__":
                         if dev == "DRYER": continue
                         
                         if next_state in ALLOWED_COMMANDS:
-                            available_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == current_state]
+                            available_homes = [
+                                h for h in fleet_data
+                                if h["device_states"][dev]["target_cmd"] == current_state
+                                and (dev != "EV" or is_ev_charging(h))
+                            ]
                             random.shuffle(available_homes)
                             
                             # Drop = Current Command Power - Next Command Power
                             drop_fraction = FRAC_MAP[dev][current_state] - FRAC_MAP[dev][next_state]
-                            drop_per_unit = drop_fraction * FRAC_MAP[dev]['CAP']
                             
-                            if drop_per_unit > 0:
-                                units = int(total_kw_to_drop / drop_per_unit)
-                                applied = min(units, len(available_homes))
-                                for h in available_homes[:applied]: h["device_states"][dev]["target_cmd"] = next_state
-                                total_kw_to_drop -= applied * drop_per_unit
+                            if drop_fraction > 0:
+                                for h in available_homes:
+                                    if total_kw_to_drop <= 0: break
+                                    drop_per_unit = drop_fraction * get_device_cap_kw(h, dev)
+                                    if drop_per_unit > 0:
+                                        h["device_states"][dev]["target_cmd"] = next_state
+                                        total_kw_to_drop -= drop_per_unit
                         
             elif pid_output > 0.01:
                 # UNDER setpoint -> Need to ADD load
@@ -1102,16 +1201,22 @@ if __name__ == "__main__":
                     if dev == "DRYER": continue
                     
                     for active_cmd in ["GE", "CP", "SHED"]:
-                        homes_to_end = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == active_cmd]
+                        homes_to_end = [
+                            h for h in fleet_data
+                            if h["device_states"][dev]["target_cmd"] == active_cmd
+                            and (dev != "EV" or is_ev_charging(h))
+                        ]
                         random.shuffle(homes_to_end)
                         
-                        add_per_unit = (FRAC_MAP[dev][f'END_{active_cmd}'] - FRAC_MAP[dev][f'{active_cmd}']) * FRAC_MAP[dev]['CAP']
+                        frac_diff = FRAC_MAP[dev][f'END_{active_cmd}'] - FRAC_MAP[dev][f'{active_cmd}']
 
-                        if add_per_unit > 0:
-                            units = int(total_kw_to_add / add_per_unit)
-                            applied = min(units, len(homes_to_end))
-                            for h in homes_to_end[:applied]: h["device_states"][dev]["target_cmd"] = "NORMAL"
-                            total_kw_to_add -= applied * add_per_unit
+                        if frac_diff > 0:
+                            for h in homes_to_end:
+                                if total_kw_to_add <= 0: break
+                                add_per_unit = frac_diff * get_device_cap_kw(h, dev)
+                                if add_per_unit > 0:
+                                    h["device_states"][dev]["target_cmd"] = "NORMAL"
+                                    total_kw_to_add -= add_per_unit
                             
                 # 2. Cascade into deeper load commands (Conservative first)
                 load_transitions = [
@@ -1129,18 +1234,23 @@ if __name__ == "__main__":
                         if dev == "DRYER": continue
                         
                         if next_state in ALLOWED_COMMANDS:
-                            available_homes = [h for h in fleet_data if h["device_states"][dev]["target_cmd"] == current_state]
+                            available_homes = [
+                                h for h in fleet_data
+                                if h["device_states"][dev]["target_cmd"] == current_state
+                                and (dev != "EV" or is_ev_charging(h))
+                            ]
                             random.shuffle(available_homes)
                             
                             # Drop = Current Command Power - Next Command Power
                             add_fraction = FRAC_MAP[dev][next_state] - FRAC_MAP[dev][current_state]
-                            add_per_unit = add_fraction * FRAC_MAP[dev]['CAP']
                             
-                            if add_per_unit > 0:
-                                units = int(total_kw_to_add / add_per_unit)
-                                applied = min(units, len(available_homes))
-                                for h in available_homes[:applied]: h["device_states"][dev]["target_cmd"] = next_state
-                                total_kw_to_add -= applied * add_per_unit
+                            if add_fraction > 0:
+                                for h in available_homes:
+                                    if total_kw_to_add <= 0: break
+                                    add_per_unit = add_fraction * get_device_cap_kw(h, dev)
+                                    if add_per_unit > 0:
+                                        h["device_states"][dev]["target_cmd"] = next_state
+                                        total_kw_to_add -= add_per_unit
 
         else:
             # --- VPP is OFF. Force all homes back to normal ---
@@ -1174,7 +1284,8 @@ if __name__ == "__main__":
             # 2. Controlled Update (driven purely by the VPP state now)
             control_cmd = determine_control(
                 sim_time=sim_time,
-                active_commands=active_cmds
+                active_commands=active_cmds,
+                home_charger_kw=home_data.get("home_charger_kw")
             )
             
             # The update() method usually returns a dictionary of the current timestep's metrics

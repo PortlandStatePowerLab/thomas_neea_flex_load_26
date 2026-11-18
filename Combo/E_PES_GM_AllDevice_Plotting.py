@@ -21,8 +21,8 @@ import matplotlib.ticker as ticker
 
 # SWITCH AT THE TOP: Choose "IMPULSE", "RAMPED", or "BOTH"
 # PLOT = "BOTH"
-PLOT = "IMPULSE" 
-# PLOT = "RAMPED"
+# PLOT = "IMPULSE" 
+PLOT = "RAMPED"
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 fl_dir = os.path.dirname(script_dir)
@@ -154,7 +154,7 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
 
     # --- SECONDARY AXIS: Command Ramping (Load Up / Shed) ---
     ax2 = ax1.twinx()
-    ax2.set_ylabel('Fraction of units given command', fontsize=13, fontweight='bold')
+    ax2.set_ylabel('Fraction of units', fontsize=13, fontweight='bold')
     ax2.set_ylim(0, 1.0)
     ax2.tick_params(axis='y', which='major', labelsize=11)
 
@@ -181,7 +181,7 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
         # 2. Load up ramp out
         ax2.annotate('Load up ramp out', 
                      xy=(pd.to_datetime('13:30', format='%H:%M'), 0.68), 
-                     xytext=(pd.to_datetime('09:15', format='%H:%M'), 0.94),
+                     xytext=(pd.to_datetime('11:30', format='%H:%M'), 0.93),
                      arrowprops=dict(arrowstyle='->', color='#0055CC', lw=1.5), 
                      fontsize=9.5, color='#0055CC', fontweight='bold',
                      bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85, edgecolor='none'))
@@ -189,15 +189,15 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
         # 3. Shed Ramp in
         ax2.annotate('Shed Ramp in', 
                      xy=(pd.to_datetime('16:30', format='%H:%M'), 0.68), 
-                     xytext=(pd.to_datetime('14:15', format='%H:%M'), 0.94),
+                     xytext=(pd.to_datetime('15:25', format='%H:%M'), 0.93),
                      arrowprops=dict(arrowstyle='->', color='#B00088', lw=1.5), 
                      fontsize=9.5, color='#B00088', fontweight='bold',
                      bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85, edgecolor='none'))
 
         # 4. Shed ramp out
         ax2.annotate('Shed ramp out', 
-                     xy=(pd.to_datetime('21:00', format='%H:%M'), 0.50), 
-                     xytext=(pd.to_datetime('19:00', format='%H:%M'), 0.84),
+                     xy=(pd.to_datetime('20:30', format='%H:%M'), 0.61), 
+                     xytext=(pd.to_datetime('20:00', format='%H:%M'), 0.84),
                      arrowprops=dict(arrowstyle='->', color='#B00088', lw=1.5), 
                      fontsize=9.5, color='#B00088', fontweight='bold',
                      bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85, edgecolor='none'))
@@ -234,11 +234,11 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
                 labels1 + labels2, 
                 loc='upper center', 
                 bbox_to_anchor=(0.5, -0.22), 
-                ncol=3, 
+                ncol=5, 
                 frameon=True,
                 facecolor='#F9F9F9',
                 edgecolor='#E0E0E0',
-                fontsize=11
+                fontsize=10
             )
 
 
@@ -248,7 +248,10 @@ def plot_panel(ax1, df, schedule_commands, title, show_legend=True, show_xtickla
 def plot_impulse_data(excel_path, mode, save_path):
     if mode.upper() in ["IMPULSE", "RAMPED"]:
         # Single Plot Mode
-        fig, ax1 = plt.subplots(figsize=(8.5, 4.0), dpi=300)
+        if mode.upper() == "IMPULSE":
+            fig, ax1 = plt.subplots(figsize=(8.5, 4.0), dpi=300)
+        elif mode.upper() == "RAMPED":
+            fig, ax1 = plt.subplots(figsize=(8.5, 4.9), dpi=300)
         
         active_commands = get_active_commands(plot_type=mode)
         target_sheet = 'Sheet1' if mode.upper() == "IMPULSE" else 'Sheet2'
