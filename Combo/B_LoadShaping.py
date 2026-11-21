@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 # USER SETTINGS
 #########################################
 
-filename = 'Loadshape_Test_5'
+filename = 'Loadshape_Test_7 '
 Input_folder = "Combo HPWH HVAC Dryer EV All Input Files"
 
 # Original OCHRE defaults folder
@@ -59,6 +59,12 @@ t_res = 5  # minutes
 # AVERAGE_DEADBAND_KW = 0.01     # Tolerance PER HOME to prevent constant toggling (Loaded from CSV)
 # ESTIMATED_LOAD_KW = 0.5       # Est. power ADDED when forcing a unit ON (LOAD) or lost when restored to NORMAL
 # ESTIMATED_SHED_KW = 0.3       # Est. power DROPPED when allowing a unit to SHED or gained when restored to NORMAL
+
+# --- DEADBAND RELEASE & COMMAND DURATION SETTINGS ---
+DEADBAND_SETTLE_MINUTES = 30          # Minutes power must remain in deadband before releasing stuck devices
+MIN_HOLD_FOR_RELEASE_MINUTES = 15     # Minimum minutes a device must be held before deadband release targets it
+DEADBAND_RELEASE_SAFETY_FACTOR = 0.70 # Fraction of deadband half-width used as safe headroom during release
+DEADBAND_RELEASE_STEP_FRACTION = 0.50  # Fraction of available safe headroom used per timestep for smooth release
 
 # --- PID CONTROLLER GAINS ---
 # Tune these parameters to adjust responsiveness and damp oscillations
@@ -459,6 +465,187 @@ def update_device_command(device_state, new_target, sim_time):
         
     return device_state["active_cmd"]
 
+
+def set_device_target_cmd(device_state, new_cmd, sim_time):
+    """
+    Sets a device's target command while tracking continuous hold duration.
+    """
+    if new_cmd == "NORMAL":
+        device_state["target_cmd"] = "NORMAL"
+        device_state["cmd_start_time"] = None
+    else:
+        if device_state.get("cmd_start_time") is None:
+            device_state["cmd_start_time"] = sim_time
+        device_state["target_cmd"] = new_cmd
+
+
+def get_device_hold_minutes(device_state, sim_time):
+    """
+    Returns how many consecutive minutes a device has been under a non-NORMAL command.
+    """
+    start_t = device_state.get("cmd_start_time")
+    if start_t is None or device_state.get("target_cmd", "NORMAL") == "NORMAL":
+        return 0.0
+    return max(0.0, (sim_time - start_t).total_seconds() / 60.0)
+
+
+def estimate_transition_delta_kw(home_data, dev, current_cmd, next_cmd, cap_kw):
+    """
+    Estimates fleet power change (+kW adds load, -kW drops load) when transitioning
+    a device from current_cmd to next_cmd.
+    """
+    cur = "LU" if current_cmd == "LOAD" else current_cmd
+    nxt = "LU" if next_cmd == "LOAD" else next_cmd
+    if cur == nxt:
+        return 0.0
+
+    if nxt == "NORMAL":
+        if cur in ["ALU", "LU"]:
+            frac_diff = FRAC_MAP[dev][f"END_{cur}"] - FRAC_MAP[dev][cur]
+        elif cur in ["SHED", "CP", "GE"]:
+            frac_diff = FRAC_MAP[dev][f"END_{cur}"] - FRAC_MAP[dev][cur]
+        else:
+            frac_diff = 0.0
+    else:
+        frac_diff = FRAC_MAP[dev][nxt] - FRAC_MAP[dev][cur]
+
+    return frac_diff * cap_kw
+
+
+def release_stuck_devices_in_deadband(
+    fleet_data,
+    sim_time,
+    average_power_kw,
+    setpoint_kw,
+    deadband_kw,
+    num_homes,
+    enabled_simulations,
+    get_device_cap_kw_fn,
+    is_ev_charging_fn
+):
+    """
+    Gradually releases devices held in active commands back toward NORMAL once
+    fleet power has remained within the deadband for at least DEADBAND_SETTLE_MINUTES,
+    while keeping predicted average power safely inside the deadband.
+    """
+    released_count = 0
+    predicted_avg_kw = average_power_kw
+
+    # Step-down mapping so severe commands unwind smoothly without large power spikes
+    step_release_map = {
+        "GE": "CP",
+        "CP": "SHED",
+        "SHED": "NORMAL",
+        "ALU": "LU",
+        "LU": "NORMAL",
+        "LOAD": "NORMAL",
+    }
+
+    controllable_devs = [
+        d for d in ["WH", "HVAC", "EV", "BATTERY"]
+        if enabled_simulations.get(d) == "ON"
+    ]
+
+    # Collect candidates currently held beyond MIN_HOLD_FOR_RELEASE_MINUTES
+    shed_candidates = []
+    load_candidates = []
+
+    for h in fleet_data:
+        for dev in controllable_devs:
+            dev_state = h["device_states"][dev]
+            cur_cmd = dev_state["target_cmd"]
+            if cur_cmd == "NORMAL":
+                continue
+            if dev == "EV" and not is_ev_charging_fn(h):
+                continue
+
+            hold_min = get_device_hold_minutes(dev_state, sim_time)
+            if hold_min < MIN_HOLD_FOR_RELEASE_MINUTES:
+                continue
+
+            next_cmd = step_release_map.get(cur_cmd, "NORMAL")
+            cap_kw = get_device_cap_kw_fn(h, dev)
+            delta_kw = estimate_transition_delta_kw(h, dev, cur_cmd, next_cmd, cap_kw)
+
+            entry = {
+                "home": h,
+                "dev": dev,
+                "cur_cmd": cur_cmd,
+                "next_cmd": next_cmd,
+                "hold_min": hold_min,
+                "delta_kw": delta_kw,
+                "tie": random.random(),
+            }
+            if cur_cmd in ["GE", "CP", "SHED"] and delta_kw > 0:
+                shed_candidates.append(entry)
+            elif cur_cmd in ["ALU", "LU", "LOAD"] and delta_kw < 0:
+                load_candidates.append(entry)
+
+    # Prioritize devices held for the longest continuous duration
+    shed_candidates.sort(key=lambda x: (-x["hold_min"], x["tie"]))
+    load_candidates.sort(key=lambda x: (-x["hold_min"], x["tie"]))
+
+    safe_db = DEADBAND_RELEASE_SAFETY_FACTOR * deadband_kw
+
+    # Stage 1: Cancel opposing Load-Up and Shed commands simultaneously (~0 net kW shift)
+    used_homes_devs = set()
+    s_idx, l_idx = 0, 0
+    while s_idx < len(shed_candidates) and l_idx < len(load_candidates):
+        s_item = shed_candidates[s_idx]
+        l_item = load_candidates[l_idx]
+
+        net_delta_kw = s_item["delta_kw"] + l_item["delta_kw"]
+        cand_avg_kw = predicted_avg_kw + (net_delta_kw / num_homes)
+
+        if abs(setpoint_kw - cand_avg_kw) <= safe_db:
+            set_device_target_cmd(s_item["home"]["device_states"][s_item["dev"]], s_item["next_cmd"], sim_time)
+            set_device_target_cmd(l_item["home"]["device_states"][l_item["dev"]], l_item["next_cmd"], sim_time)
+            used_homes_devs.add((id(s_item["home"]), s_item["dev"]))
+            used_homes_devs.add((id(l_item["home"]), l_item["dev"]))
+            predicted_avg_kw = cand_avg_kw
+            released_count += 2
+            s_idx += 1
+            l_idx += 1
+        else:
+            # Advance whichever side has the larger magnitude delta to find a closer match
+            if abs(s_item["delta_kw"]) >= abs(l_item["delta_kw"]):
+                s_idx += 1
+            else:
+                l_idx += 1
+
+    # Stage 2: Single-sided release bounded by remaining safe deadband headroom
+    predicted_raw_error = setpoint_kw - predicted_avg_kw
+
+    # Release stuck SHED/CP/GE devices if there is safe upward headroom below setpoint + safe_db
+    add_budget_kw = max(0.0, (predicted_raw_error + safe_db)) * num_homes * DEADBAND_RELEASE_STEP_FRACTION
+    for item in shed_candidates:
+        if add_budget_kw <= 0:
+            break
+        if (id(item["home"]), item["dev"]) in used_homes_devs:
+            continue
+        if 0 < item["delta_kw"] <= add_budget_kw:
+            set_device_target_cmd(item["home"]["device_states"][item["dev"]], item["next_cmd"], sim_time)
+            add_budget_kw -= item["delta_kw"]
+            predicted_avg_kw += item["delta_kw"] / num_homes
+            released_count += 1
+
+    # Release stuck ALU/LU/LOAD devices if there is safe downward headroom above setpoint - safe_db
+    predicted_raw_error = setpoint_kw - predicted_avg_kw
+    drop_budget_kw = max(0.0, (-predicted_raw_error + safe_db)) * num_homes * DEADBAND_RELEASE_STEP_FRACTION
+    for item in load_candidates:
+        if drop_budget_kw <= 0:
+            break
+        if (id(item["home"]), item["dev"]) in used_homes_devs:
+            continue
+        drop_kw = abs(item["delta_kw"])
+        if 0 < drop_kw <= drop_budget_kw:
+            set_device_target_cmd(item["home"]["device_states"][item["dev"]], item["next_cmd"], sim_time)
+            drop_budget_kw -= drop_kw
+            predicted_avg_kw -= drop_kw / num_homes
+            released_count += 1
+
+    return released_count
+
 def get_interpolated_vpp_settings(sim_time, hourly_settings):
     """
     Computes linearly interpolated target power setpoint and deadband for any minute/second
@@ -744,10 +931,10 @@ def init_ctrl(home_path, weather_file_path):
         "path": home_path,
         "home_charger_kw": home_charger_kw,
         "device_states": {
-            "WH": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": WH_RESPONSE_MIN, "max_delay": WH_RESPONSE_MAX},
-            "HVAC": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": HVAC_RESPONSE_MIN, "max_delay": HVAC_RESPONSE_MAX},
-            "EV": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": 0, "max_delay": 0},
-            "BATTERY": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": 0, "max_delay": 0},
+            "WH": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": WH_RESPONSE_MIN, "max_delay": WH_RESPONSE_MAX, "cmd_start_time": None, "total_controlled_min": 0.0},
+            "HVAC": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": HVAC_RESPONSE_MIN, "max_delay": HVAC_RESPONSE_MAX, "cmd_start_time": None, "total_controlled_min": 0.0},
+            "EV": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": 0, "max_delay": 0, "cmd_start_time": None, "total_controlled_min": 0.0},
+            "BATTERY": {"active_cmd": "NORMAL", "target_cmd": "NORMAL", "effective_time": pd.Timestamp.min, "min_delay": 0, "max_delay": 0, "cmd_start_time": None, "total_controlled_min": 0.0},
         }
     }
 
@@ -871,6 +1058,8 @@ if __name__ == "__main__":
                 "new_vals": list(orig_vals), # Copy to preserve data outside simulation bounds
                 "max_cap": max_cap,
                 "mode": "NORMAL",
+                "cmd_start_time": None,
+                "total_controlled_min": 0.0,
                 "pending_off": False,
                 "work_queue": 0.0,
                 "time_to_idx": time_to_idx, # Store the lookup dict here for convenience
@@ -885,6 +1074,7 @@ if __name__ == "__main__":
         previous_average_power_kw_dryer = 0.0 
         integral_error_dryer = 0.0
         previous_error_dryer = 0.0
+        in_deadband_minutes_dryer = 0.0
         num_homes_dryer = len(fleet_data_dryer)
         
         for current_time in sim_times:
@@ -893,16 +1083,23 @@ if __name__ == "__main__":
                 current_time, hourly_settings
             )
             
-            # 1. Update Energy Queues
+            # 1. Update Energy Queues & Command Duration Tracking
             for h in fleet_data_dryer:
                 csv_idx = h["time_to_idx"][current_time] # Find the true row for this timestamp
                 val = h["orig_vals"][csv_idx]
                 if h["max_cap"] > 0 and val > 0:
                     h["work_queue"] += (val / h["max_cap"])
+                if h["mode"] != "NORMAL":
+                    h["total_controlled_min"] += t_res
                     
             # 2. VPP / PID Logic
             if is_vpp_active:
                 error = AVERAGE_SETPOINT_KW - previous_average_power_kw_dryer
+                if abs(error) <= AVERAGE_DEADBAND_KW:
+                    in_deadband_minutes_dryer += t_res
+                else:
+                    in_deadband_minutes_dryer = 0.0
+
                 integral_error_dryer += error
 
                 # --- ANTI-WINDUP CLAMPING ---
@@ -919,7 +1116,7 @@ if __name__ == "__main__":
                 if pid_output < -AVERAGE_DEADBAND_KW:
                     total_kw_to_drop = abs(pid_output) * num_homes_dryer
                     
-                    # Cascade into deeper shed commands for Dryers[cite: 3]
+                    # Cascade into deeper shed commands for Dryers
                     drop_transitions = [
                         ("NORMAL", "SHED", 1.0 - dryer_duty_cycle_shed),
                         ("SHED", "CP", dryer_duty_cycle_shed - dryer_duty_cycle_cp),
@@ -929,13 +1126,16 @@ if __name__ == "__main__":
                     for current_state, next_state, drop_frac in drop_transitions:
                         if total_kw_to_drop <= 0: break
                         available_homes = [h for h in fleet_data_dryer if h["mode"] == current_state and h["work_queue"] > 1e-4]
-                        random.shuffle(available_homes)
+                        # Rotate burden: prefer homes with lowest cumulative controlled time
+                        available_homes.sort(key=lambda item: (item["total_controlled_min"], random.random()))
                         
                         drop_per_unit = drop_frac * DRYER_CAP_KW
                         if drop_per_unit > 0:
                             units_to_shed = int(total_kw_to_drop / drop_per_unit)
                             shed_applied = min(units_to_shed, len(available_homes))
                             for h in available_homes[:shed_applied]:
+                                if h["cmd_start_time"] is None:
+                                    h["cmd_start_time"] = current_time
                                 h["mode"] = next_state
                                 h["pending_off"] = True
                             total_kw_to_drop -= shed_applied * drop_per_unit
@@ -943,7 +1143,7 @@ if __name__ == "__main__":
                 elif pid_output > AVERAGE_DEADBAND_KW:
                     total_kw_to_add = pid_output * num_homes_dryer
                     
-                    # Cascade into restored load commands for Dryers[cite: 3]
+                    # Cascade into restored load commands for Dryers
                     add_transitions = [
                         ("GE", "CP", dryer_duty_cycle_cp - dryer_duty_cycle_ge),
                         ("CP", "SHED", dryer_duty_cycle_shed - dryer_duty_cycle_cp),
@@ -953,7 +1153,8 @@ if __name__ == "__main__":
                     for current_state, next_state, add_frac in add_transitions:
                         if total_kw_to_add <= 0: break
                         available_homes = [h for h in fleet_data_dryer if h["mode"] == current_state]
-                        random.shuffle(available_homes)
+                        # Free devices held for the longest continuous duration first
+                        available_homes.sort(key=lambda item: (-(current_time - item["cmd_start_time"]).total_seconds() if item["cmd_start_time"] else 0.0, random.random()))
                         
                         add_per_unit = add_frac * DRYER_CAP_KW
                         if add_per_unit > 0:
@@ -961,15 +1162,49 @@ if __name__ == "__main__":
                             restored_applied = min(units_to_restore, len(available_homes))
                             for h in available_homes[:restored_applied]:
                                 h["mode"] = next_state
+                                if next_state == "NORMAL":
+                                    h["cmd_start_time"] = None
                                 h["pending_off"] = True
                             total_kw_to_add -= restored_applied * add_per_unit
+
+                elif in_deadband_minutes_dryer >= DEADBAND_SETTLE_MINUTES:
+                    # Power has remained inside deadband for >= DEADBAND_SETTLE_MINUTES:
+                    # Gradually release longest-held dryers within safe upward deadband headroom
+                    safe_db_dryer = DEADBAND_RELEASE_SAFETY_FACTOR * AVERAGE_DEADBAND_KW
+                    add_budget_kw = max(0.0, (error + safe_db_dryer)) * num_homes_dryer * DEADBAND_RELEASE_STEP_FRACTION
+                    add_transitions = [
+                        ("GE", "CP", dryer_duty_cycle_cp - dryer_duty_cycle_ge),
+                        ("CP", "SHED", dryer_duty_cycle_shed - dryer_duty_cycle_cp),
+                        ("SHED", "NORMAL", 1.0 - dryer_duty_cycle_shed)
+                    ]
+                    for current_state, next_state, add_frac in add_transitions:
+                        if add_budget_kw <= 0: break
+                        held_homes = [
+                            h for h in fleet_data_dryer
+                            if h["mode"] == current_state
+                            and h["cmd_start_time"] is not None
+                            and ((current_time - h["cmd_start_time"]).total_seconds() / 60.0) >= MIN_HOLD_FOR_RELEASE_MINUTES
+                        ]
+                        held_homes.sort(key=lambda item: (-(current_time - item["cmd_start_time"]).total_seconds(), random.random()))
+                        add_per_unit = add_frac * DRYER_CAP_KW
+                        for h in held_homes:
+                            # Idle dryers (empty work_queue) draw 0 kW when restored, so they cost 0 headroom
+                            effective_add = add_per_unit if h["work_queue"] > 1e-4 else 0.0
+                            if effective_add <= add_budget_kw:
+                                h["mode"] = next_state
+                                if next_state == "NORMAL":
+                                    h["cmd_start_time"] = None
+                                h["pending_off"] = True
+                                add_budget_kw -= effective_add
             else:
                 for h in fleet_data_dryer:
                     if h["mode"] in ["SHED", "CP", "GE"]:
                         h["mode"] = "NORMAL"
+                        h["cmd_start_time"] = None
                         h["pending_off"] = True
                 integral_error_dryer = 0.0
                 previous_error_dryer = 0.0
+                in_deadband_minutes_dryer = 0.0
                 
             # 3. Dispense Energy & Build New Schedule
             current_step_aggregate = 0.0
@@ -1051,6 +1286,7 @@ if __name__ == "__main__":
     # PID State tracking variables
     integral_error = 0.0
     previous_error = 0.0
+    in_deadband_minutes = 0.0
     
     # Fast lookup dictionary for retrieving Pass 2 Dryer states
     dryer_mode_lookup = {h["path"]: h.get("mode_log", {}) for h in fleet_data_dryer}
@@ -1076,12 +1312,19 @@ if __name__ == "__main__":
 
     print("Starting Co-Simulation Time Loop...")
     for sim_time in sim_times:
+        deadband_released_this_step = 0
         
         # Reset any EV that has unplugged or finished charging back to NORMAL
         if EV_SIMULATION == "ON":
             for h in fleet_data:
                 if h["device_states"]["EV"]["target_cmd"] != "NORMAL" and not is_ev_charging(h):
-                    h["device_states"]["EV"]["target_cmd"] = "NORMAL"
+                    set_device_target_cmd(h["device_states"]["EV"], "NORMAL", sim_time)
+
+        # Accumulate cumulative controlled minutes across all active devices
+        for h in fleet_data:
+            for dev_name, dev_state in h["device_states"].items():
+                if dev_name != "DRYER" and dev_state["target_cmd"] != "NORMAL":
+                    dev_state["total_controlled_min"] += t_res
 
         # Determine smoothly interpolated VPP state and deadband from CSV schedule
         is_vpp_active, AVERAGE_SETPOINT_KW, AVERAGE_DEADBAND_KW = get_interpolated_vpp_settings(
@@ -1096,13 +1339,29 @@ if __name__ == "__main__":
             
             # 1. Apply the deadband directly to the actual error
             if abs(raw_error) <= AVERAGE_DEADBAND_KW:
-                # Inside the deadband: freeze control and reset tracking
+                # Inside the deadband: freeze PID error tracking and track deadband dwell time
                 # pid_output = 0.0
                 error = 0.0
                 integral_error = 0.0
                 previous_error = 0.0
+                in_deadband_minutes += t_res
+
+                # Once power remains within deadband long enough, gradually release stuck devices
+                if in_deadband_minutes >= DEADBAND_SETTLE_MINUTES:
+                    deadband_released_this_step = release_stuck_devices_in_deadband(
+                        fleet_data=fleet_data,
+                        sim_time=sim_time,
+                        average_power_kw=average_power_kw,
+                        setpoint_kw=AVERAGE_SETPOINT_KW,
+                        deadband_kw=AVERAGE_DEADBAND_KW,
+                        num_homes=num_homes,
+                        enabled_simulations=enabled_simulations,
+                        get_device_cap_kw_fn=get_device_cap_kw,
+                        is_ev_charging_fn=is_ev_charging,
+                    )
             else:
-                # Outside the deadband: compute PID normally
+                # Outside the deadband: compute PID normally and reset deadband dwell timer
+                in_deadband_minutes = 0.0
                 error = raw_error
                 priority_list = FAST_COMMAND_PRIORITY if error > 0.25 else SLOW_COMMAND_PRIORITY
             
@@ -1139,7 +1398,8 @@ if __name__ == "__main__":
                             if h["device_states"][dev]["target_cmd"] == active_cmd
                             and (dev != "EV" or is_ev_charging(h))
                         ]
-                        random.shuffle(homes_to_end)
+                        # Prioritize releasing devices held for the longest continuous duration
+                        homes_to_end.sort(key=lambda item: (-get_device_hold_minutes(item["device_states"][dev], sim_time), random.random()))
                         
                         # Use your explicit END_ fraction logic
                         frac_key = active_cmd if active_cmd != "LOAD" else "LU"
@@ -1151,7 +1411,7 @@ if __name__ == "__main__":
                                 if total_kw_to_drop <= 0: break
                                 drop_per_unit = frac_diff * get_device_cap_kw(h, dev)
                                 if drop_per_unit > 0:
-                                    h["device_states"][dev]["target_cmd"] = "NORMAL"
+                                    set_device_target_cmd(h["device_states"][dev], "NORMAL", sim_time)
                                     total_kw_to_drop -= drop_per_unit
                         
                 # 2. Cascade into deeper shed commands (Conservative first across ALL devices)
@@ -1176,7 +1436,8 @@ if __name__ == "__main__":
                                 if h["device_states"][dev]["target_cmd"] == current_state
                                 and (dev != "EV" or is_ev_charging(h))
                             ]
-                            random.shuffle(available_homes)
+                            # Rotate control burden across homes with lowest cumulative controlled time
+                            available_homes.sort(key=lambda item: (item["device_states"][dev]["total_controlled_min"], random.random()))
                             
                             # Drop = Current Command Power - Next Command Power
                             drop_fraction = FRAC_MAP[dev][current_state] - FRAC_MAP[dev][next_state]
@@ -1186,7 +1447,7 @@ if __name__ == "__main__":
                                     if total_kw_to_drop <= 0: break
                                     drop_per_unit = drop_fraction * get_device_cap_kw(h, dev)
                                     if drop_per_unit > 0:
-                                        h["device_states"][dev]["target_cmd"] = next_state
+                                        set_device_target_cmd(h["device_states"][dev], next_state, sim_time)
                                         total_kw_to_drop -= drop_per_unit
                         
             elif pid_output > 0.01:
@@ -1206,7 +1467,8 @@ if __name__ == "__main__":
                             if h["device_states"][dev]["target_cmd"] == active_cmd
                             and (dev != "EV" or is_ev_charging(h))
                         ]
-                        random.shuffle(homes_to_end)
+                        # Prioritize releasing devices held for the longest continuous duration
+                        homes_to_end.sort(key=lambda item: (-get_device_hold_minutes(item["device_states"][dev], sim_time), random.random()))
                         
                         frac_diff = FRAC_MAP[dev][f'END_{active_cmd}'] - FRAC_MAP[dev][f'{active_cmd}']
 
@@ -1215,7 +1477,7 @@ if __name__ == "__main__":
                                 if total_kw_to_add <= 0: break
                                 add_per_unit = frac_diff * get_device_cap_kw(h, dev)
                                 if add_per_unit > 0:
-                                    h["device_states"][dev]["target_cmd"] = "NORMAL"
+                                    set_device_target_cmd(h["device_states"][dev], "NORMAL", sim_time)
                                     total_kw_to_add -= add_per_unit
                             
                 # 2. Cascade into deeper load commands (Conservative first)
@@ -1239,7 +1501,8 @@ if __name__ == "__main__":
                                 if h["device_states"][dev]["target_cmd"] == current_state
                                 and (dev != "EV" or is_ev_charging(h))
                             ]
-                            random.shuffle(available_homes)
+                            # Rotate control burden across homes with lowest cumulative controlled time
+                            available_homes.sort(key=lambda item: (item["device_states"][dev]["total_controlled_min"], random.random()))
                             
                             # Drop = Current Command Power - Next Command Power
                             add_fraction = FRAC_MAP[dev][next_state] - FRAC_MAP[dev][current_state]
@@ -1249,18 +1512,19 @@ if __name__ == "__main__":
                                     if total_kw_to_add <= 0: break
                                     add_per_unit = add_fraction * get_device_cap_kw(h, dev)
                                     if add_per_unit > 0:
-                                        h["device_states"][dev]["target_cmd"] = next_state
+                                        set_device_target_cmd(h["device_states"][dev], next_state, sim_time)
                                         total_kw_to_add -= add_per_unit
 
         else:
             # --- VPP is OFF. Force all homes back to normal ---
             for h in fleet_data:
                 for dev_name in h["device_states"]:
-                    h["device_states"][dev_name]["target_cmd"] = "NORMAL"
+                    set_device_target_cmd(h["device_states"][dev_name], "NORMAL", sim_time)
             
             # Reset PID memory tracking to prevent baseline distortion at next event start
             integral_error = 0.0
             previous_error = 0.0
+            in_deadband_minutes = 0.0
 
         #Initialize 
         current_step_aggregate_power = 0.0
@@ -1307,6 +1571,13 @@ if __name__ == "__main__":
         aggregate_power_kw = current_step_aggregate_power
         average_power_kw = aggregate_power_kw / num_homes
 
+        active_hold_durations = [
+            get_device_hold_minutes(h["device_states"][dev], sim_time)
+            for h in fleet_data
+            for dev in ["WH", "HVAC", "EV", "BATTERY"]
+            if h["device_states"][dev]["target_cmd"] != "NORMAL"
+        ]
+
         # --- NEW: Log Fleet States for this Timestep ---
         vpp_state_log.append({
             "Time": sim_time,
@@ -1314,6 +1585,10 @@ if __name__ == "__main__":
             "Deadband (kW)": AVERAGE_DEADBAND_KW if is_vpp_active else "OFF",
             "Actual Average Power (kW)": average_power_kw,
             "Aggregate Power (kW)": aggregate_power_kw,
+            "In Deadband Duration (min)": in_deadband_minutes if is_vpp_active else 0.0,
+            "Deadband Released Devices": deadband_released_this_step,
+            "Avg Device Hold (min)": float(np.mean(active_hold_durations)) if active_hold_durations else 0.0,
+            "Max Device Hold (min)": float(np.max(active_hold_durations)) if active_hold_durations else 0.0,
             "WH in NORMAL": sum(1 for h in fleet_data if h["device_states"]["WH"]["active_cmd"] == "NORMAL"),
             "WH in ALU": sum(1 for h in fleet_data if h["device_states"]["WH"]["active_cmd"] in ["ALU"]),
             "WH in LOAD": sum(1 for h in fleet_data if h["device_states"]["WH"]["active_cmd"] in ["LOAD", "LU"]),

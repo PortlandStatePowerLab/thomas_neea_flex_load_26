@@ -14,7 +14,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals(
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Loadshape_Test_5'
+input_file_root = 'Loadshape_Test_8'
 
 PLOT_COMMAND_FRACTIONS = "ON"  # Set to "ON" or "OFF"
 
@@ -266,7 +266,7 @@ def plot_data(baseline_file, controlled_file, title, photo_file, setpoint_csv=No
                 # Filter relevant columns for the target device
                 relevant_cols = [
                     c for c in df_fleet.columns 
-                    if c != time_col and search_prefix in c.upper()
+                    if c != time_col and c.upper().startswith((f"{search_prefix} ", f"{search_prefix}_"))
                 ]
 
                 if relevant_cols:
