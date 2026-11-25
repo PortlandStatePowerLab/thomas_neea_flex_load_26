@@ -3,7 +3,7 @@ Author: Thomas Metzler
 Created: 9/10/26
 Adjusts load up and shed commands to keep power consumption at a constant level.
 """
-
+ 
 import os
 import shutil
 import datetime as dt
@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 # USER SETTINGS
 #########################################
 
-filename = 'Loadshape_Test_8'
+filename = 'Loadshape_Test_10' 
 Input_folder = "Combo HPWH HVAC Dryer EV All Input Files"
 
 # Original OCHRE defaults folder
@@ -45,7 +45,7 @@ CSV_ADDRESS = "in.schedules.csv"
 # Simulation parameters
 Start = dt.datetime(2018, 8, 11, 0, 0)
 Duration = 2  # days
-t_res = 5  # minutes
+t_res = 1  # minutes
 
 
 # --- GLOBAL VPP EVENT SETTINGS ---
@@ -883,7 +883,7 @@ def get_hvac_setpoints(mode_name, is_cooling_season):
         return (AC_Tcontrol_GEC, AC_TdeadbandC), (heat_sp, heat_db)
 
 
-def determine_control(sim_time, active_commands, home_charger_kw=None):
+def determine_control(sim_time, active_commands, home_charger_kw=None, dryer_dispense_kw=None):
     # Initialize control signal dictionary
     ctrl_signal = {}
 
@@ -929,6 +929,10 @@ def determine_control(sim_time, active_commands, home_charger_kw=None):
         ctrl_signal['Battery'] = {
             'P Setpoint': battery_p
         }
+
+    # Clothes Dryer control (uses live work_queue dispense power from update_dryer_live_schedule)
+    if DRYER_SIMULATION == "ON" and dryer_dispense_kw is not None:
+        ctrl_signal['Clothes Dryer'] = {'P Setpoint': dryer_dispense_kw}
 
     return ctrl_signal
 
@@ -1408,15 +1412,19 @@ if __name__ == "__main__":
                     sim_time
                 )
 
-            # Mutate the dryer's 5-minute in-memory schedule before OCHRE updates
+            # Compute live deferred/curtailed dryer kW from work_queue
+            dryer_dispense_kw = None
             if DRYER_SIMULATION == "ON":
-                update_dryer_live_schedule(home_data, sim_time)
+                dryer_dispense_kw = update_dryer_live_schedule(home_data, sim_time)
+
+            
             
             # 2. Controlled Update (driven purely by the VPP state now)
             control_cmd = determine_control(
                 sim_time=sim_time,
                 active_commands=active_cmds,
-                home_charger_kw=home_data.get("home_charger_kw")
+                home_charger_kw=home_data.get("home_charger_kw"),
+                dryer_dispense_kw=dryer_dispense_kw,
             )
             
             # The update() method usually returns a dictionary of the current timestep's metrics

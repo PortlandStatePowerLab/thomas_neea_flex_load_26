@@ -14,7 +14,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals(
 fl_dir = os.path.dirname(script_dir)
 working_dir = os.path.dirname(fl_dir)   
 
-input_file_root = 'Loadshape_Test_8'
+input_file_root = 'Loadshape_Test_10'
 
 PLOT_COMMAND_FRACTIONS = "ON"  # Set to "ON" or "OFF"
 
